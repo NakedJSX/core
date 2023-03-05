@@ -1,19 +1,21 @@
+// These elements are self closing (i.e. <hr>, not <hr/>)
 const voidElements =
-    {
-        area: true,
-        base: true,
-        br: true,
-        col: true,
-        embed: true,
-        hr: true,
-        img: true,
-        input: true,
-        link: true,
-        meta: true,
-        source: true,
-        track: true,
-        wbr: true
-    };
+    new Set(
+        [
+            'area',
+            'base',
+            'br',
+            'col',
+            'embed',
+            'hr',
+            'img',
+            'input',
+            'link',
+            'meta',
+            'source',
+            'track',
+            'wbr'
+        ]);
 
 function empty(s)
 {
@@ -39,10 +41,10 @@ class Element
 
     constructor(document, tagName)
     {
-        this.jsxDocument = document;
-        this.#tagName = tagName;
-        this.#children = [];
-        this.#attributes = {};
+        this.jsxDocument    = document;
+        this.#tagName       = tagName ? tagName.toLowerCase() : undefined;
+        this.#children      = [];
+        this.#attributes    = {};
     }
 
     get id()
@@ -145,11 +147,11 @@ class Element
 
             html += '>';
 
-            if (voidElements[this.#tagName])
+            if (voidElements.has(this.#tagName))
                 return html;
         }
         else
-            html = ""; /* Text node */
+            html = ''; /* Text node */
 
         this.#children.forEach(
             child =>
