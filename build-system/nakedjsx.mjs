@@ -77,6 +77,9 @@ export class NakedJSX
 
         if (!fs.existsSync(pagesRootDir))
             throw new Error(`Pages root dir ${pagesRootDir} does not exist`);
+
+        if (!fs.existsSync(outputDir))
+            fs.mkdirSync(outputDir);
         
         this.#srcDir                    = fs.realpathSync(pagesRootDir);
         this.#dstDir                    = fs.realpathSync(outputDir);
