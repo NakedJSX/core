@@ -22,7 +22,16 @@ export const JSX =
                 props = {};            
 
             if (typeof tag === "function")
+            {
+                // Make child elements selectively placeable via {props.children}
+                props.children = children;
+
                 return tag(props, children);
+            }
+
+            //
+            // We're dealing with regular HTML, not a JSX component
+            //
 
             const element = jsxDocument.createElement(tag);
 
