@@ -3,8 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
-import http from 'node:http'
-import { URL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 import chokidar from 'chokidar';
@@ -14,11 +13,12 @@ import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
-
 import { collateCss, getCssClassName } from './babel/plugin-scoped-css.mjs';
 import { loadCss } from './babel/css-loader.mjs';
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, abort  } from './util.mjs';
+
+import { DevServer } from './dev-server.mjs';
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +31,8 @@ const resolveModule = createRequire(import.meta.url).resolve;
 export class NakedJSX
 {
     #developmentMode;
-    #developmentModeClientJs;
+    #developmentServer;
+    #developmentClientJs;
 
     #srcDir;
     #dstDir;
@@ -67,8 +68,6 @@ export class NakedJSX
     #nodeResolveCache   = new Map();
     #commonjsCache      = new Map();
     #jsonCache          = new Map();
-
-    #idleClients        = new Map(); // page url -> [ idle http response ]
 
     constructor(
         {
@@ -144,11 +143,11 @@ export class NakedJSX
         if (this.#started)
             throw Error('NakedJSX already started');
         
-        this.#started                   = true;
-        this.#developmentMode           = true;
-        this.#developmentModeClientJs   = fs.readFileSync(`${nakedJsxSourceDir}/dev-mode-client-injection.js`).toString();
+        this.#started               = true;
+        this.#developmentMode       = true;
+        this.#developmentServer     = new DevServer({ serverRoot: this.#dstDir });
+        this.#developmentClientJs   = fs.readFileSync(`${nakedJsxSourceDir}/dev-client-injection.js`).toString();
 
-        this.#startWebServer();
         this.#startWatchingFiles();
 
         //
@@ -194,177 +193,8 @@ export class NakedJSX
 
         this.#startWatchingFiles();
     }
-    
+
     ////////////////
-
-    #respondUtf8(response, code, contentType, content, headers = {})
-    {
-        response.writeHead(
-            code,
-            {
-                'Content-Type': contentType,
-                ...headers
-            });
-        response.end(content, 'utf-8');
-    }
-
-    #respondBinary(response, code, contentType, content, headers = {})
-    {
-        response.writeHead(
-            code,
-            {
-                'Content-Type':     contentType,
-                'Content-Length':   content.length,
-                ...headers
-            });
-        response.end(content);
-    }
-
-    #getFileType(filename)
-    {
-        //
-        // These MIME types and maxAge values are used by the dev server only.
-        //
-
-        const ext = path.extname(filename);
-        const contentTypes =
-            {
-                '.html':    { type: 'text/html',        maxAge: -1  },
-                '.css':     { type: 'text/css',         maxAge: 300 },
-                '.js':      { type: 'text/javascript',  maxAge: 300 },
-                '.svg':     { type: 'image/svg+xml',    maxAge: 300 },
-                '.webp':    { type: 'image/webp',       maxAge: 300 },
-                '.png':     { type: 'image/png',        maxAge: 300 },
-                '.jpg':     { type: 'image/jpeg',       maxAge: 300 },
-                '.jpeg':    { type: 'image/jpeg',       maxAge: 300 },
-            };
-
-        return contentTypes[ext] || { type: 'application/octet-stream', maxAge: -1 };
-    }
-
-    #serveFile(response, filepath)
-    {
-        // log(` (${filepath})`);
-
-        if (!filepath.startsWith(this.#dstDir))
-            return this.#respondUtf8(response, 404, 'text/plain');
-        
-        const type = this.#getFileType(filepath);
-
-        let cacheControl;
-        if (type.maxAge > 0)
-            cacheControl = `public, max-age=${type.maxAge}, immutable`;
-        else
-            cacheControl = `max-age=-1`;
-        
-        fsp.readFile(filepath)
-            .then( content => this.#respondBinary(response, 200, type.type,    content, { 'Cache-Control': cacheControl }))
-            .catch(error   => this.#respondUtf8(  response, 500, 'text/plain', error.toString()));
-    }
-
-    #handleDevRequest(req, response, url)
-    {
-        const functionPath = url.pathname.substring(url.pathname.indexOf(':') + 1);
-        
-        switch(functionPath)
-        {
-            case '/idle':
-                let idlePath = url.searchParams.get('path');
-
-                //
-                // Normalise idle path
-                //
-                
-                if (idlePath.endsWith('.html'))
-                    idlePath = idlePath.substring(0, idlePath.length - '.html'.length);
-                
-                if (idlePath.endsWith('/index'))
-                    idlePath = idlePath.substring(0, idlePath.length - 'index'.length);
-
-                if (idlePath === '')
-                    pathPath = '/';
-                
-                log(`Client is watching ${idlePath}`);
-
-                const idleClients = this.#idleClients.get(idlePath);
-                if (idleClients)
-                    idleClients.push(response);
-                else
-                    this.#idleClients.set(idlePath, [ response ]);
-
-                break;
-
-            default:
-                this.#respondUtf8(response, 404, 'text/plain', '');
-        }
-    }
-
-    #startWebServer()
-    {
-        //
-        // Start a local dev web server
-        //        
-
-        const serverPort = 8999;
-        const serverUrl = 'http://localhost:' + serverPort;
-        const server = http.createServer(
-            (req, response) =>
-            {
-                const url       = new URL(req.url, 'http://localhost/');
-                const pathname  = url.pathname;
-
-                log(`HTTP request for ${req.url}`);
-
-                if (pathname.startsWith('/nakedjsx:/'))
-                    return this.#handleDevRequest(req, response, url);
-
-                let file;
-
-                if (pathname.endsWith('/'))
-                    file = `${this.#dstDir}${pathname}index.html`;
-                else
-                    file = `${this.#dstDir}${pathname}`;
-
-                function resolve(testfile, onResolved, onError)
-                {
-                    fsp.realpath(testfile)
-                        .then(
-                            (resolvedFile) =>
-                            {
-                                fsp.stat(resolvedFile)
-                                    .then(
-                                        (stat) =>
-                                        {
-                                            if (stat.isFile())
-                                                onResolved(resolvedFile);
-                                            else
-                                                onError(new Error(`Not a file: ${resolvedFile}`));
-                                        })
-                                    .catch((error) => onError(error));
-                            })
-                        .catch((error) => onError(error));
-                }
-
-                resolve(
-                    file,
-                    (resolvedFile) => this.#serveFile(response, resolvedFile),
-                    (outerError) =>
-                    {
-                        if (path.extname(file))
-                            this.#respondUtf8(response, 500, 'text/plain', outerError.toString());
-                        else
-                            resolve(
-                                file + '.html',
-                                (resolvedFile) => this.#serveFile(response, resolvedFile),
-                                (innerError) => this.#respondUtf8(response, 500, 'text/plain', outerError.toString())
-                                );
-                    });
-            });
-
-        server.listen(serverPort);
-
-        log(`Development web server started on ${serverUrl}`);
-    }
      
     #startWatchingFiles()
     {
@@ -1314,9 +1144,9 @@ export class NakedJSX
                                 if (this.#developmentMode)
                                 {
                                     if (page.thisBuild.inlineJs)
-                                        page.thisBuild.inlineJs += this.#developmentModeClientJs;
+                                        page.thisBuild.inlineJs += this.#developmentClientJs;
                                     else
-                                        page.thisBuild.inlineJs = this.#developmentModeClientJs;
+                                        page.thisBuild.inlineJs = this.#developmentClientJs;
                                 }
 
                                 const htmlFilePath = `${page.outputDir}/${page.htmlFile}`;
@@ -1374,20 +1204,13 @@ export class NakedJSX
 
         this.#pagesInProgress.delete(page);
 
-        if (this.#developmentMode)
+        if (this.#developmentServer)
         {
             //
             // Any browsers idling on this page need should reload
             //
 
-            const idleClients = this.#idleClients.get(page.uriPath);
-            if (idleClients)
-            {
-                this.#idleClients.delete(page.uriPath);
-
-                for (let response of idleClients)
-                    this.#respondUtf8(response, 200, 'application/json', JSON.stringify({ action: 'reload' }));
-            }
+            this.#developmentServer.onUriPathUpdated(page.uriPath);
         }
 
         if (!this.#pagesInProgress.size)
@@ -1400,10 +1223,12 @@ export class NakedJSX
                 return;
             }
 
+            let suffix = this.#developmentMode ? ` (${this.#developmentServer.serverUrl})` : '';
+
             if (this.#pagesWithErrors.size)
-                err(`\nFinished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.`);
+                err(`\nFinished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.${suffix}`);
             else
-                log(`\nFinished build after ${this.#getBuildDurationSeconds()} seconds.`);
+                log(`\nFinished build after ${this.#getBuildDurationSeconds()} seconds.${suffix}`);
 
             if (!this.#developmentMode)
                 process.exit();
