@@ -79,5 +79,5 @@ export const JSX =
     };
 
 // Automatically use the window document if it's available
-if (typeof window !== 'undefined' && window.document)
+if (typeof window === 'object' && typeof window.document === 'object')
     JSX.SetDocument(window.document);
