@@ -32,7 +32,6 @@
     "postcss": "^8.4.21",
     "postcss-nested": "^6.0.0",
     "rollup": "^3.10.1",
-    "rollup-plugin-pnp-resolve": "^2.0.0",
     "terser": "^5.16.1"
   }
 }
