@@ -1,15 +1,13 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
-  "exports":
-    {
-      ".": "./build-system/nakedjsx.mjs",
-      "./jsx": "./runtime/jsx.jsx",
-      "./render": "./runtime/render.jsx"
-    },
-  "scripts": {},
+  "exports": {
+    ".": "./build-system/nakedjsx.mjs",
+    "./jsx": "./runtime/jsx.jsx",
+    "./page": "./runtime/page.jsx"
+  },
   "keywords": [
     "jsx",
     "scoped-css",
@@ -21,6 +19,7 @@
   "license": "BSD-3-Clause",
   "dependencies": {
     "@babel/core": "^7.20.12",
+    "@babel/generator": "^7.21.4",
     "@babel/plugin-transform-react-jsx": "^7.20.13",
     "@babel/preset-env": "^7.20.2",
     "@rollup/plugin-babel": "^6.0.3",
@@ -28,10 +27,13 @@
     "@rollup/plugin-json": "^6.0.0",
     "@rollup/plugin-node-resolve": "^15.0.1",
     "chokidar": "^3.5.3",
+    "css-tree": "^2.3.1",
     "csso": "^5.0.5",
     "postcss": "^8.4.21",
     "postcss-nested": "^6.0.0",
     "rollup": "^3.10.1",
+    "rollup-plugin-pnp-resolve": "^2.0.0",
     "terser": "^5.16.1"
-  }
+  },
+  "packageManager": "yarn@3.5.0"
 }

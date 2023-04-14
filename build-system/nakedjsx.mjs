@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import { createHash } from 'node:crypto';
 import http from 'node:http'
 import { URL, fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 import chokidar from 'chokidar';
 import { minify } from 'terser';
@@ -20,6 +21,12 @@ import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, abort  } from './util.mjs';
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
+
+//
+// We are using createRequire(..).resolve to allow babel to find the plugin under yarn pnp.
+//
+
+const resolveModule = createRequire(import.meta.url).resolve;
 
 export class NakedJSX
 {
@@ -700,17 +707,21 @@ export class NakedJSX
                     plugins:
                         [
                             [
-                            // Allow babel to understand JSX syntax, as well as transpile to our JSX.Create* javascript.
-                            "@babel/plugin-transform-react-jsx",
-                            {
-                                pragma: "JSX.CreateElement",
-                                pragmaFrag: "JSX.CreateFragment"
-                            }
-                        ],
-                        [
-                            // Our babel plugin extracts scoped css="..." from JSX
-                            nakedJsxSourceDir + "/babel/plugin-scoped-css.mjs"
-                        ]]
+                                //
+                                // Allow babel to understand JSX syntax, as well as transpile to our JSX.Create* javascript.
+                                //
+                                
+                                resolveModule("@babel/plugin-transform-react-jsx"),
+                                {
+                                    pragma: "JSX.CreateElement",
+                                    pragmaFrag: "JSX.CreateFragment"
+                                }
+                            ],
+                            [
+                                // Our babel plugin extracts scoped css="..." from JSX
+                                nakedJsxSourceDir + "/babel/plugin-scoped-css.mjs"
+                            ]
+                        ]
                 });
     }
 
@@ -729,7 +740,7 @@ export class NakedJSX
                         presets:
                             [[
                                 // Final babel run to compile down to our browser target
-                                "@babel/preset-env",
+                                resolveModule("@babel/preset-env"),
                                 {
                                     bugfixes: true,
                                     modules: false  // Don't transform import statements - however, rollup should have removed them all.
@@ -1022,7 +1033,7 @@ export class NakedJSX
                                             },
                                         mangle:
                                             {
-                                                module: true,
+                                                // module: true,
 
                                                 //
                                                 // Unsafe options that we have accepted ...
@@ -1058,13 +1069,13 @@ export class NakedJSX
                 // Our rollup plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
                 mapCachePlugin(this.#getImportPlugin(), this.#babelInputCache),
 
-                //
+                // Allow page code to make use of esm imports
                 mapCachePlugin(nodeResolve(), this.#nodeResolveCache),
 
-                //
+                // Allow page code to make use of commonjs imports
                 mapCachePlugin(commonjs(), this.#commonjsCache),
 
-                // 
+                // Allow json files to be imported as data
                 mapCachePlugin(json(), this.#jsonCache)
             ];
         
