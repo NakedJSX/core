@@ -19,9 +19,6 @@ export const Page =
         Render()
         {
             const jsxDocument = JSX.GetDocument();
-
-            if (typeof window !== 'undefined' && jsxDocument === window.document)
-                throw Error('RenderDocument() called when JSX.GetDocument() === window.document');
             
             const page = workerData.page;
 

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 
 import pkg_generator from '@babel/generator';
 import { loadCss } from './css-loader.mjs';
-import { convertToBase } from '../util.mjs';
+import { err, convertToBase } from '../util.mjs';
 
 const generate = pkg_generator.default;
 
@@ -172,7 +172,10 @@ export default function(babel)
             //
 
             if (node.expressions.length > 0 || node.quasis.length != 1)
-                return null;
+            {
+                err(`Javascript variables within scoped css attributes are not currently supported. If you need this, consider using a style={\`...\`} attribute instead.\n    at file://${currentFileInfo.filePath}:${node.loc.start.line}:${node.loc.start.column}`);
+                return undefined;
+            }
 
             return node.quasis[0].value.cooked;
         }
