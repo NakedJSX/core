@@ -62,21 +62,23 @@ export function mapCachePlugin(plugin, cache = new Map())
                             };                    
                 },
 
-                async resolveId(id, importer, options, ...args)
-                {
-                    // log('Map cache resolveId ' + id);
-                    return cacheImpl('resolveId', id + JSON.stringify(options), plugin.resolveId.bind(this, id, importer, options, ...args));
-                },
+                // Caching resolveId doesn't appear to improve build times
+
+                // async resolveId(id, importer, options, ...args)
+                // {
+                //     // log('Map cache resolveId ' + id);
+                //     return cacheImpl('resolveId', id + JSON.stringify(options), plugin.resolveId.bind(this, id, importer, options, ...args));
+                // },
 
                 // async load(id, ...args)
                 // {
-                //     log('Map cache load ' + id);
-                //
+                //     // log('Map cache load ' + id);
+                
                 //     //
                 //     // DON'T ENABLE UNLESS CACHE INVALIDATION FOR CHANGED FILES IS IMPLEMENTED
                 //     // It also doesn't appear to offer significant benefit, probably due to OS fs cache.
                 //     //
-                //
+                
                 //     return cacheImpl('load', id, plugin.load.bind(this, id, ...args));
                 // },
 

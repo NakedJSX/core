@@ -60,6 +60,16 @@ class Element
         return this.#tagName;
     }
 
+    get attributes()
+    {
+        return this.#attributes;
+    }
+
+    get children()
+    {
+        return this.#children;
+    }
+
     setAttribute(key, value)
     {
         // If the value is empty, strip the attribute

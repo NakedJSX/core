@@ -1,22 +1,13 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.1.3",
+  "version": "0.2.1",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "exports": {
     ".": "./build-system/nakedjsx.mjs",
-    "./jsx": "./runtime/jsx.jsx",
-    "./page": "./runtime/page.jsx"
+    "./jsx": "./runtime/jsx.mjs",
+    "./page": "./runtime/page.mjs"
   },
-  "keywords": [
-    "jsx",
-    "scoped-css",
-    "frontend",
-    "dev-server",
-    "build-tool"
-  ],
-  "author": "David Hogan",
-  "license": "BSD-3-Clause",
   "dependencies": {
     "@babel/core": "^7.20.12",
     "@babel/generator": "^7.21.4",
@@ -33,5 +24,18 @@
     "postcss-nested": "^6.0.0",
     "rollup": "^3.10.1",
     "terser": "^5.16.1"
-  }
+  },
+  "author": "David Hogan",
+  "license": "BSD-3-Clause",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "nakedjsx",
+    "jsx",
+    "scoped-css",
+    "frontend",
+    "dev-server",
+    "build-tool"
+  ]
 }

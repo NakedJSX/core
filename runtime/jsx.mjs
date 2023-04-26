@@ -4,9 +4,6 @@ export const JSX =
     {
         SetDocument(document)
         {
-            if (jsxDocument)
-                throw Error(`JSX.CreateDocument() called when jsxDocument is already set to ${jsxDocument}`);
-
             jsxDocument = document;
         },
 
@@ -17,10 +14,8 @@ export const JSX =
 
         CreateElement(tag, props, ...children)
         {
-            // Allow JSX functions to assume props is an object
-            if (!props)
-                props = {};            
-
+            props = props || {};
+            
             if (typeof tag === "function")
             {
                 // Make child elements selectively placeable via {props.children}
@@ -35,7 +30,7 @@ export const JSX =
 
             const element = jsxDocument.createElement(tag);
 
-            Object.entries(props || {}).forEach(
+            Object.entries(props).forEach(
                 ([name, value]) =>
                 {
                     if (typeof window !== 'undefined' && name.startsWith('on') && name.toLowerCase() in window)

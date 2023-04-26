@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { Worker } from 'node:worker_threads';
+
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -13,12 +13,13 @@ import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
-import { collateCss, getCssClassName } from './babel/plugin-scoped-css.mjs';
-import { loadCss } from './babel/css-loader.mjs';
-import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, abort  } from './util.mjs';
 
+import { ScopedCssSet, loadCss } from './css.mjs'
+import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
+import { log, warn, err, abort, isExternalImport, absolutePath } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
+import WorkerPool from './thread/pool.mjs';
+import { scopedCssSetUsedByModules } from './babel/plugin-scoped-css.mjs';
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,8 +29,19 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
 const resolveModule = createRequire(import.meta.url).resolve;
 
+export const configFilename = '.nakedjsx.json';
+
+export const emptyConfig =
+    {
+        importMapping:              {},
+        browserslistTargetQuery:    'defaults',
+        plugins:                    []
+    };
+
 export class NakedJSX
 {
+    #config;
+
     #developmentMode;
     #developmentServer;
     #developmentClientJs;
@@ -40,13 +52,14 @@ export class NakedJSX
 
     #commonCssFile;
     #commonCss;
-    #browserslistTargetQuery;
 
     #assetImportPlugins = new Map();
 
     #pathMapJs          = {};
     #pathMapAsset       = {};
     #definitions        = {};
+
+    #htmlRenderPool;
 
     #started            = false;
     #initialising       = true;
@@ -61,6 +74,8 @@ export class NakedJSX
     #watcher;
     #watchFiles         = new Map(); // filename -> Set<page>
 
+    #rollupPlugins;
+
     #terserCache        = new Map();
     #babelInputCache    = new Map();
     #babelOutputCache   = new Map();
@@ -70,43 +85,141 @@ export class NakedJSX
     #jsonCache          = new Map();
 
     constructor(
+        rootDir,
         {
-            pagesRootDir,
-            outputDir,
-            commonCssFile           = undefined,
-            importMapping           = {},
-            browserslistTargetQuery = 'defaults',
-            assetImportPlugins      = []
-        })
+            configOverride
+        } = {})
     {
-        log('NakedJSX initialising');
+        log(`NakedJSX initialising (Node ${process.version})`);
 
-        if (!fs.existsSync(pagesRootDir))
-            throw new Error(`Pages root dir ${pagesRootDir} does not exist`);
+        rootDir = absolutePath(rootDir);
 
-        if (!fs.existsSync(outputDir))
-            fs.mkdirSync(outputDir);
+        //
+        // All config paths are relative to the pages root dir
+        //
+
+        if (!fs.existsSync(rootDir))
+            throw new Error(`Root dir ${rootDir} does not exist`);
+
+        log(`Root and working directory: ${rootDir}`);
+        process.chdir(rootDir);
         
-        this.#srcDir                    = fs.realpathSync(pagesRootDir);
-        this.#dstDir                    = fs.realpathSync(outputDir);
-        this.#dstAssetDir               = this.#dstDir + '/asset';
-        this.#commonCssFile             = commonCssFile ? fs.realpathSync(commonCssFile) : undefined;
-        this.#browserslistTargetQuery   = browserslistTargetQuery;
+        //
+        // Obtain config
+        //
+
+        this.#config = Object.assign({}, emptyConfig);
+
+        if (configOverride)
+        {
+            log(`Using overriden config - ignoring ${configFilename}`);
+            Object.assign(this.#config, configOverride);
+        }
+        else if (fs.existsSync(configFilename))
+        {
+            log(`Loading ${configFilename}`);
+            try
+            {
+                Object.assign(this.#config, JSON.parse(fs.readFileSync(configFilename)));
+            }
+            catch(error)
+            {
+                err(`Failed to parse ${configFilePath}: ${error}`);
+                this.exit(1);
+            }
+        }
+        else
+            log(`No config file ${configFilename}, using default config`);
+
+        // Definitions might be sensitive, so mask them when dumping the effective config
+        const redactedConfig = Object.assign({}, this.#config);
+
+        for (const [ alias, definition ] of Object.entries(redactedConfig.importMapping))
+            if (definition.type === 'definition')
+                redactedConfig.importMapping[alias].value = '****';
+
+        log(`Config:\n${JSON.stringify(redactedConfig, null, 4)}`);
+
+        //
+        // Initialise the HTML rendering worker 'pool'
+        //
+        // NOTE: using more threads (eg. os.cpus().length) is slower or the same,
+        // so this is more about isolating the execution of HTML generation JS.
+        //
+
+        this.#htmlRenderPool = new WorkerPool('HTML Render', 1);
+    }
+
+    async processConfig()
+    {
+        const config = this.#config;
+
+        //
+        // Source and destination directories
+        //
+
+        if (!config.outputDir)
+        {
+            err("Config is missing required 'outputDir'");
+            this.exit(1);
+        }
+
+        this.#srcDir = process.cwd();
+        this.#dstDir = absolutePath(config.outputDir);
+    
+        if (this.#dstDir.startsWith(this.#srcDir + path.sep))
+        {
+            err(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
+            this.exit(1);
+        }
+
+        if (!fs.existsSync(this.#dstDir))
+        {
+            log(`Creating output dir: ${this.#dstDir}`);
+            fs.mkdirSync(this.#dstDir); 
+        }
+        
+        this.#dstAssetDir       = this.#dstDir + path.sep + 'asset';
+
+        //
+        // Common / external CSS
+        //
+
+        if (config.commonCssFile)
+        {
+            this.#commonCssFile = absolutePath(config.commonCssFile);
+                
+            if (!fs.existsSync(this.#commonCssFile))
+            {
+                err(`Common CSS file ${this.#commonCssFile} doesn't exist`);
+                this.exit(1);
+            }
+        }
 
         //
         // Process import mappings
         //
 
-        for (let [alias, value] of Object.entries(importMapping))
+        for (let [alias, value] of Object.entries(config.importMapping))
         {
             switch(value.type)
             {
                 case 'source':
-                    this.#pathMapJs[alias] = { ...value };
+                    this.#pathMapJs[alias] = { ...value, path: absolutePath(value.path) };
+                    if (!fs.existsSync(this.#pathMapJs[alias].path))
+                    {
+                        err(`Source import path ${this.#pathMapJs[alias].path} for alias ${alias} does not exist`);
+                        this.exit(1);
+                    }
                     break;
 
                 case 'asset':
-                    this.#pathMapAsset[alias] = { ...value };
+                    this.#pathMapAsset[alias] = { ...value, path: absolutePath(value.path) };
+                    if (!fs.existsSync(this.#pathMapAsset[alias].path))
+                    {
+                        err(`Source import path ${this.#pathMapAsset[alias].path} for alias ${alias} does not exist`);
+                        this.exit(1);
+                    }
                     break;
 
                 case 'definition':
@@ -119,32 +232,55 @@ export class NakedJSX
         }
 
         //
-        // Register asset import plugins
+        // Register plugins
         //
 
-        for (let pluginRegistration of assetImportPlugins)
+        for (let pluginPackageNameOrPath of config.plugins)
+        {
+            const { default: pluginRegistration } = await import(pluginPackageNameOrPath);
+
             pluginRegistration(
                 (plugin) =>
                 {
-                    log(`Registering asset import plugin: ${plugin.type}`);
-                    this.#assetImportPlugins.set(plugin.type, plugin);
+                    if (plugin.type === 'asset')
+                    {
+                        log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
+                        this.#assetImportPlugins.set(plugin.id, plugin);
+                    }
+                    else
+                    {
+                        err(`Cannot register plugin of unknown type ${plugin.type}, id ${plugin.id}`);
+                        this.exit(1);
+                    }
                 });
+        }
+    }
 
-        //
-        // Good to go, from here call either developmentMode() or build()
-        //
+    exit(code = 0)
+    {
+        log('Exiting ...');
+
+        if (this.#htmlRenderPool)
+            this.#htmlRenderPool.close();
+
+        // wtf, there doesn't seem to be a close feature in the node http server.
+
+        process.exit(code);
     }
 
     /**
      * Start a development build and web server.
      */
-    developmentMode()
+    async developmentMode()
     {
         if (this.#started)
             throw Error('NakedJSX already started');
         
         this.#started               = true;
         this.#developmentMode       = true;
+
+        await this.processConfig();
+
         this.#developmentServer     = new DevServer({ serverRoot: this.#dstDir });
         this.#developmentClientJs   = fs.readFileSync(`${nakedJsxSourceDir}/dev-client-injection.js`).toString();
 
@@ -156,6 +292,8 @@ export class NakedJSX
 
         if (process.stdin.isTTY)
         {
+            process.on('SIGINT', this.exit);
+
             process.stdin.setRawMode(true);
             process.stdin.setEncoding('utf8');
             process.stdin.on('readable',
@@ -168,28 +306,25 @@ export class NakedJSX
                     switch (char.toLowerCase())
                     {
                         case 'x':
-                            // wtf, there doesn't seem to be a close feature in the node http server.
-                            process.exit();
+                            this.exit();
                             break;
                     }
                 });
-            
-            log(`*********************\n` +
-                `* Press (x) to exit *\n` +
-                `*********************\n`);
         }
     }
 
     /**
      * Perform a production build.
      */
-    build()
+    async build()
     {
         if (this.#started)
             throw Error('NakedJSX already started');
 
-        this.#started           = false;
+        this.#started           = true;
         this.#developmentMode   = false;
+
+        await this.processConfig();
 
         this.#startWatchingFiles();
     }
@@ -219,7 +354,6 @@ export class NakedJSX
             'ready',
             () =>
             {
-                log('\nREADY.\n');
                 this.#initialising = false;
                 this.#buildAll();
             });
@@ -259,6 +393,12 @@ export class NakedJSX
     async #considerChangedPageFile(filename)
     {
         log(`Changed file: ${filename}`);
+
+        if (filename === configFilename)
+        {
+            log('Config updated, please restart.');
+            this.exit(0);
+        }
 
         //
         // A file has under #srcDir has changed.
@@ -388,6 +528,20 @@ export class NakedJSX
             this.#commonCss = loadCss((await fsp.readFile(this.#commonCssFile)).toString());
         else
             this.#commonCss = '';
+        
+        this.#rollupPlugins =
+            {
+                input:
+                    {
+                        client: this.#createRollupInputPlugins(true),
+                        server: this.#createRollupInputPlugins(false),
+                    },
+                output:
+                    {
+                        client: this.#createRollupOutputPlugins(true),
+                        server: this.#createRollupOutputPlugins(false),
+                    }
+            };
 
         // This allows async events to safely queue up pages to build, during the build
         this.#pagesInProgress   = this.#pagesToBuild;
@@ -502,57 +656,50 @@ export class NakedJSX
         return (durationMs / 1000).toFixed(3);
     }
 
-    #getBabelInputPlugin()
+    #getBabelInputPlugin(forClientJs)
     {
-        return  babel(
-                {
-                    sourceMaps: this.#developmentMode,
-                    babelHelpers: 'inline',
-                    filter:
-                        (id) =>
-                        {
-                            // log(`Babel filter: ${id}`);
-
-                            if (!id.includes('/node_modules/'))
-                                return true;
-
-                            //
-                            // Generatelly, we do not want to run babel over dependencies from node_modules, as these are assumed 
-                            // to be built packages.
-                            //
-                            // Exception - any file with a .jsx extension, which is assumed to contain inline JSX that we want to
-                            // convert and also extract scoped css="..." from.
-                            //
-
-                            if (id.endsWith('.jsx'))
-                                return true;
-                            
-                            //
-                            // Otherwise, don't run babel on this node_modules import.
-                            //
-
-                            return false;
-                        },
-                    skipPreflightCheck: this.#developmentMode,
-                    plugins:
+        const config =
+            {
+                sourceMaps: this.#developmentMode,
+                babelHelpers: 'inline',
+                skipPreflightCheck: this.#developmentMode,
+                plugins:
+                    [
                         [
-                            [
-                                //
-                                // Allow babel to understand JSX syntax, as well as transpile to our JSX.Create* javascript.
-                                //
-                                
-                                resolveModule("@babel/plugin-transform-react-jsx"),
-                                {
-                                    pragma: "JSX.CreateElement",
-                                    pragmaFrag: "JSX.CreateFragment"
-                                }
-                            ],
-                            [
-                                // Our babel plugin extracts scoped css="..." from JSX
-                                nakedJsxSourceDir + "/babel/plugin-scoped-css.mjs"
-                            ]
+                            //
+                            // Allow babel to transpile JSX syntax to our JSX.Create* javascript.
+                            //
+                            
+                            resolveModule("@babel/plugin-transform-react-jsx"),
+                            {
+                                pragma: "JSX.CreateElement",
+                                pragmaFrag: "JSX.CreateFragment"
+                            }
                         ]
-                });
+                    ]
+            };
+
+        if (forClientJs)
+        {
+            config.plugins.push(
+                [
+                    //
+                    // This plugin extracts scoped css="..." from client JSX (only).
+                    //
+                    // We don't use it for server HTML JSX as this plugin runs at JSX transpile
+                    // time, before the JSX prop values are known. If we used this plugin for
+                    // HTML JSX transpiling, we wouldn't be able to have props alter the content
+                    // of scoped CSS. This is HTML CSS is not final until HTML generation time.
+                    //
+
+                    nakedJsxSourceDir + "/babel/plugin-scoped-css.mjs",
+                    {
+                        commonCss: this.#commonCss
+                    }
+                ]);
+        }
+
+        return babel(config);
     }
 
     #getBabelOutputClientPlugin()
@@ -560,13 +707,12 @@ export class NakedJSX
         return  getBabelOutputPlugin(
                     {
                         sourceMaps: this.#developmentMode,
-                        // exclude: 'node_modules/**',
                         plugins:
                             [
                                 // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
                                 nakedJsxSourceDir + "/babel/plugin-iife.mjs"
                             ],
-                        targets: this.#browserslistTargetQuery,
+                        targets: this.#config.browserslistTargetQuery,
                         presets:
                             [[
                                 // Final babel run to compile down to our browser target
@@ -596,7 +742,7 @@ export class NakedJSX
         return hashFilename;
     }
 
-    async #importAssetDefault(asset, setCacheResult)
+    async #importAssetDefault(asset, resolve)
     {
         //
         // A straight copy of the asset with a hash embedded in the filename.
@@ -615,7 +761,7 @@ export class NakedJSX
         const result    = `export default '${uriPath}'`;
 
         // Other async loads don't need to wait for the copy operation
-        setCacheResult(result);
+        resolve(result);
 
         await fsp.writeFile(filepath, content);
         log(`Copied asset ${uriPath}\n`+
@@ -624,34 +770,33 @@ export class NakedJSX
         return result;
     }
 
-    async #importAssetRaw(asset, setCacheResult)
+    async #importAssetRaw(asset, resolve)
     {
         //
         // Make the raw asset content available to source code, as a string.
         // Suitable for text content, such as an SVG, that you'd like to embed
-        // the page html or client js.
+        // the page HTML or client JS.
         //
 
         const content = await fsp.readFile(asset.file);
         const result = `export default ${JSON.stringify(content.toString())};`;
         
-        setCacheResult(result);
         return result;
     }
 
-    async #importAsset(asset, setCacheResult)
+    async #importAsset(asset, resolve)
     {
         // ?<asset type>:<asset options string>
         const match = asset.query?.match(/([^:]+):?(.*)/);
 
         if (!match)
-            return await this.#importAssetDefault(asset, setCacheResult);
+            return await this.#importAssetDefault(asset, resolve);
         
         const importType = match[1];
         asset.optionsString = match[2];
 
         if (importType === 'raw')
-            return await this.#importAssetRaw(asset, setCacheResult);
+            return await this.#importAssetRaw(asset, resolve);
 
         //
         // Check plugins first, this allows built-in plugins (raw) to be overridden
@@ -665,8 +810,7 @@ export class NakedJSX
                             
                             // Useful functions
                             hashAndRenameFile: this.#hashAndRenameFile.bind(this),
-                            getCssClassName: getCssClassName,
-                            setCacheResult
+                            resolve: resolve
                         },
                         asset);
 
@@ -802,7 +946,7 @@ export class NakedJSX
                                 }
                         });
                 
-                function setCacheResult(result)
+                function resolve(result)
                 {
                     cached.mtime  = mtime;
                     cached.result = result;
@@ -820,7 +964,7 @@ export class NakedJSX
                     resolveLoadingPromise();
                 }
 
-                const result = await builder.#importAsset(meta.asset, setCacheResult);
+                const result = await builder.#importAsset(meta.asset, resolve);
 
                 //
                 // If the plugin didn't set the cache result explicitly (as an optimisation),
@@ -828,7 +972,7 @@ export class NakedJSX
                 //
 
                 if (!cached.resolved)
-                    setCacheResult(result);
+                    resolve(result);
                 
                 return result;
             }
@@ -889,12 +1033,12 @@ export class NakedJSX
                 };
     }
 
-    #getCommonInputPlugins()
+    #createRollupInputPlugins(forClientJs)
     {
         const plugins =
             [
-                // Babel for JSX and extracting scoped css
-                mapCachePlugin(this.#getBabelInputPlugin(), this.#babelInputCache),
+                // Babel for JSX
+                mapCachePlugin(this.#getBabelInputPlugin(forClientJs), this.#babelInputCache),
 
                 // Our rollup plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
                 mapCachePlugin(this.#getImportPlugin(), this.#babelInputCache),
@@ -908,6 +1052,32 @@ export class NakedJSX
                 // Allow json files to be imported as data
                 mapCachePlugin(json(), this.#jsonCache)
             ];
+        
+        return plugins;
+    }
+
+    #createRollupOutputPlugins(forClientJs)
+    {
+        //
+        // We currently don't use any rollup output plugins for the HTML JS.
+        // It just needs to run once in the same node process, to produce HTML.
+        //
+
+        if (!forClientJs)
+            return [];
+        
+        const plugins =
+            [
+                mapCachePlugin(this.#getBabelOutputClientPlugin(), this.#babelOutputCache)
+            ];
+        
+        //
+        // Terser is used to compress the client JS.
+        // It pretty much kills step through debugging, so only enable it for production builds.
+        //
+
+        if (!this.#developmentMode)
+            plugins.push(mapCachePlugin(this.#getTerserPlugin(), this.#terserCache));
         
         return plugins;
     }
@@ -957,7 +1127,7 @@ export class NakedJSX
         const inputOptions =
             {
                 input: page.clientJsFileIn,
-                plugins: this.#getCommonInputPlugins()
+                plugins: this.#rollupPlugins.input.client
             };
         
         const outputOptions =
@@ -965,24 +1135,8 @@ export class NakedJSX
                 entryFileNames: '[name].[hash:64].js',
                 format: 'es',
                 sourcemap: this.#developmentMode,
-                plugins:
-                    [
-                        mapCachePlugin(this.#getBabelOutputClientPlugin(), this.#babelOutputCache)
-                    ]
-            };
-        
-        //
-        // Terser is used to compress the client js
-        //
-
-        if (!this.#developmentMode)
-        {
-            //
-            // Terser pretty much kills step through debugging, so only enable it for production builds.
-            //
-
-            outputOptions.plugins.push(mapCachePlugin(this.#getTerserPlugin(), this.#terserCache));
-        }            
+                plugins: this.#rollupPlugins.output.client
+            };    
         
         rollup(inputOptions)
             .then(
@@ -990,7 +1144,7 @@ export class NakedJSX
                 {
                     //
                     // Remember which files, if changed, should trigger a rebuild of this page.
-                    // We'll add to this list after compiling the html js.
+                    // We'll add to this list after compiling the html JS.
                     //
 
                     for (let watchFile of bundle.watchFiles)
@@ -1019,7 +1173,7 @@ export class NakedJSX
                                 }
 
                                 //
-                                // Output client js if we're not inlining it
+                                // Output client JS if we're not inlining it
                                 //
 
                                 for (let output of chunks)
@@ -1046,7 +1200,7 @@ export class NakedJSX
                                         {
                                             page.thisBuild.clientJsModuleIds = moduleIds.flat();
 
-                                            // If none of our async tasks failed, continue to the html generation
+                                            // If none of our async tasks failed, continue to the HTML generation
                                             if (!this.#pagesWithErrors.has(page))
                                                 this.#buildHtmlJs(page);
                                         });
@@ -1064,38 +1218,63 @@ export class NakedJSX
     {
         if (!page.htmlJsFileIn)
         {
-            page.abortController.abort(`Page ${page.uriPath} does not have a html js file and cannot produce ${page.htmlFile}`);
+            page.abortController.abort(`Page ${page.uriPath} does not have a HTML js file and cannot produce ${page.htmlFile}`);
             return;
         }
+
+        log(`Building ${page.uriPath}`);
 
         //
         // Our HTML pages are generated by executing the htmlJsFileIn.
         // But first we have to handle our custom asset imports and
-        // extract our scoped css using our babel plugin.
+        // extract our scoped CSS using our babel plugin.
         //
 
         const inputOptions =
             {
                 input: page.htmlJsFileIn,
-                plugins: this.#getCommonInputPlugins(),
-                external: [
-                    /^node:.*/
-                ]
+                plugins: this.#rollupPlugins.input.server,
+                external:
+                    (id, parent, isResolved) =>
+                    {
+                        if (id.startsWith('node:'))
+                            return true;
+                        
+                        if (id.includes('/jsx/') || id.endsWith('/jsx'))
+                            return false;
+                        
+                        if (id.startsWith('@nakedjsx'))
+                            return true;
+                        
+                        if (id.includes('/@nakedjsx/'))
+                            return true;
+
+                        if (isExternalImport(id))
+                        {
+                            log(id + ' from ' + parent + ' (' + isResolved + ')');
+                            return true;
+                        }
+
+                        return false;
+                    }
             };
     
         const outputOptions =
             {
                 file: page.htmlJsFileOut,
                 sourcemap: 'inline',
-                format: 'es'
+                format: 'es',
+                plugins: this.#rollupPlugins.output.server
             };
 
         rollup(inputOptions)
             .then(
                 (bundle) =>
                 {
+                    // log(`Rolled up ${page.uriPath}`);
+
                     //
-                    // Also watch the html js imports for changes.
+                    // Also watch the HTML JS imports for changes.
                     //
                     // This includes any asset files and other custom imports.
                     //
@@ -1110,33 +1289,8 @@ export class NakedJSX
                             {
                                 bundle.close();
 
-                                //
-                                // We have produced the Javascript that will generate the html.
-                                //
-                                // Now we need to gather the necessary css to pass to the 
-                                // html generation process.
-                                //
-
-                                let css = this.#commonCss;
-
-                                page.thisBuild.htmlJsModuleIds =
-                                    output.output
-                                        .filter(output => output.type == 'chunk')
-                                        .flatMap(output => output.moduleIds);
-
-                                if (page.thisBuild.clientJsModuleIds)
-                                    css += collateCss(page.thisBuild.htmlJsModuleIds.concat(page.thisBuild.clientJsModuleIds));
-                                else
-                                    css += collateCss(page.thisBuild.htmlJsModuleIds);
+                                // log(`Written bundle ${page.uriPath}`);
                                 
-                                page.thisBuild.inlineCss =
-                                    loadCss(
-                                        css,
-                                        {
-                                            renameVariables: true,
-                                            development: true
-                                        });
-
                                 //
                                 // In dev mode, inject the script that long polls the server for changes.
                                 //
@@ -1150,32 +1304,42 @@ export class NakedJSX
                                 }
 
                                 const htmlFilePath = `${page.outputDir}/${page.htmlFile}`;
-                                const worker = new Worker(page.htmlJsFileOut, { workerData: { page } });
-                                
-                                worker.on(
-                                    'error',
-                                    error =>
+
+                                //
+                                // Execution of the HTML generation JS happens in another thread.
+                                //
+
+                                this.#htmlRenderPool.runTask(
                                     {
-                                        err(`Server js execution error in page ${page.uriPath}`);
-                                        page.abortController.abort(error);
-                                    });
-                                worker.on(
-                                    'exit',
-                                    code =>
+                                        taskJsFile:         page.htmlJsFileOut,
+                                        developmentMode:    this.#developmentMode,
+                                        commonCss:          this.#commonCss,
+                                        scopedCssSet:       scopedCssSetUsedByModules(page.thisBuild.clientJsModuleIds),
+                                        page
+                                    },
+                                    // Task callback
+                                    (error, generatedHtml) =>
                                     {
-                                        if(code !== 0)
-                                            page.abortController.abort(Error(`Worker exited with code ${code} for page ${page.uriPath}`));
-                                    });
-                                worker.on(
-                                    'message',
-                                    htmlContent => 
-                                    {
-                                        fsp.writeFile(htmlFilePath, htmlContent)
+                                        if (error) {
+                                            err(`Server js execution error in page ${page.uriPath}`);
+                                            err(error);
+                                            page.abortController.abort(error);
+                                            return;
+                                        }
+
+                                        fsp.writeFile(htmlFilePath, generatedHtml)
                                             .then(
                                                 () =>
                                                 {
-                                                    fsp.unlink(page.htmlJsFileOut)
-                                                        .then(this.#onPageBuildComplete(page));
+                                                    if (this.#developmentMode)
+                                                    {
+                                                        // Leave the generation JS in dev mode
+                                                        this.#onPageBuildComplete(page);
+                                                    }
+                                                    else
+                                                        fsp.unlink(page.htmlJsFileOut)
+                                                            .then(this.#onPageBuildComplete(page));
+                                                    
                                                 });
                                     });
                             })
@@ -1223,15 +1387,15 @@ export class NakedJSX
                 return;
             }
 
-            let suffix = this.#developmentMode ? ` (${this.#developmentServer.serverUrl})` : '';
-
             if (this.#pagesWithErrors.size)
-                err(`\nFinished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.${suffix}`);
+                err(`Finished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.`);
             else
-                log(`\nFinished build after ${this.#getBuildDurationSeconds()} seconds.${suffix}`);
+                log(`Finished build after ${this.#getBuildDurationSeconds()} seconds.`);
 
             if (!this.#developmentMode)
                 process.exit();
+            
+            log(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit\nREADY`);
         }
     }
 }

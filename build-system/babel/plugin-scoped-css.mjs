@@ -1,161 +1,85 @@
 import fs from 'node:fs';
 
-import pkg_generator from '@babel/generator';
-import { loadCss } from './css-loader.mjs';
-import { err, convertToBase } from '../util.mjs';
-
+import pkg_generator from '@babel/generator'
 const generate = pkg_generator.default;
 
-// Used to generate css class names
-let nextClassNameIndex          = 0;
+import { log, err, removeQueryString } from '../util.mjs';
+import { ScopedCssSet } from '../css.mjs';
 
-const cssCodeDedupToClassName   = new Map();
-const allCssClasses             = new Map();
-const cssOriginFileInfos        = new Map();
+const cssOriginFileInfos = new Map();
+const scopedCssSet = new ScopedCssSet();
 
-export function collateCss(jsModules)
+// Return a ScopedCssSet containing only CSS relevant to files in moduleIds
+export function scopedCssSetUsedByModules(moduleIds)
 {
-    const dedup = new Set();
-    const nl = '\n';
+    if (!moduleIds)
+        return new ScopedCssSet(scopedCssSet.reserved);
 
-    let output = '';
+    const uniqueClassNames = new Set();
 
-    //
-    // Collate the css needed for each module in jsModules.
-    //
-
-    for (let jsModule of jsModules)
+    for (let moduleId of moduleIds)
     {
-        const fileInfo = getCssOriginInfo(jsModule);
-
+        const fileInfo = cssOriginFileInfos.get(moduleId);
         if (!fileInfo)
             continue;
 
-        // output += `/*! ${jsModule} */${nl}`;
-
-        for (let cssClassName of fileInfo.classes)
-        {
-            // Only output the class once, as sometimes multiple files emit identical classes with same hash
-            if (dedup.has(cssClassName))
-                continue;
-            
-            dedup.add(cssClassName)
-
-            output += `${allCssClasses.get(cssClassName).cssCodeFinal}${nl}`;
-        };
-    }
-    
-    return output;
-}
-
-export function getCssClassName(associatedFile, cssCode)
-{
-    if (typeof associatedFile === 'string')
-    {
-        //
-        // This is the case when called from outside of this plugin,
-        // for example to generate a css class associated with an image
-        // asset.
-        //
-
-        const existingInfo = getCssOriginInfo(associatedFile);
-
-        if (existingInfo)
-            associatedFile = existingInfo;
-        else
-            associatedFile = createCssOriginInfo(associatedFile)
+        for (let className of fileInfo.referencedClassNames)
+            uniqueClassNames.add(className);
     }
 
-    //
-    // We want our deduplication system to work based on compiled css,
-    // such that css="color: red" and css="color: red;" output the same
-    // code, and therefore produce a single shared css class.
-    //
-
-    // Find a string that doesn't exist within the css code to use as a temporary classname
-    let tmpClassName = '_';
-    while (cssCode.includes(tmpClassName))
-        tmpClassName += '_';
-
-    // Put the class through the same compilation process used on the overall result
-    const cssCodeDedup = loadCss(`.${tmpClassName}{${cssCode}}`);
-
-    // If the css optimised away, we're done
-    if (!cssCodeDedup)
-        return;
-
-    //
-    // Have we seen this code before?
-    //
-
-    let cssClassName = cssCodeDedupToClassName.get(cssCodeDedup)
-
-    if (cssClassName)
-    {
-        //
-        // Reusing an existing class.
-        //
-        
-        // log(`  CSS Class: ${cssClassName}`);
-    }
-    else
-    {
-        cssClassName = convertToBase(nextClassNameIndex++, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
-        cssCodeDedupToClassName.set(cssCodeDedup, cssClassName);
-    
-        // log(`  CSS Class: ${cssClassName} (new)`);
-
-        //
-        // Replace the temporary class name to create the the final css code
-        //
-
-        const cssCodeFinal = cssCodeDedup.replaceAll(tmpClassName, cssClassName);
-        allCssClasses.set(cssClassName, { cssCodeDedup, cssCodeFinal });
-    }
-
-    associatedFile.classes.add(cssClassName);
-    return cssClassName;
-}
-
-function removeQueryString(importPath)
-{
-    const queryIndex = importPath.indexOf('?');
-
-    if (queryIndex != -1)
-        return importPath.substring(0, queryIndex);
-    else
-        return importPath;
-}
-
-function getCssOriginInfo(filePath)
-{
-    filePath = removeQueryString(filePath);
-
-    return cssOriginFileInfos.get(filePath);
-}
-
-function createCssOriginInfo(filePath)
-{
-    filePath = removeQueryString(filePath);
-
-    const info =
-        {
-            filePath,
-            mtime:                      fs.statSync(filePath).mtimeMs,
-            classes:                    new Set(),
-            jsPathsWithCssAttributes:   new Set()
-        };
-
-    cssOriginFileInfos.set(filePath, info);
-    return info;
+    return scopedCssSet.subset(uniqueClassNames.keys());
 }
 
 // babel plugin implementation
-export default function(babel)
+export default function(babel, options)
 {
     const t = babel.types;
 
+    const { commonCss } = options;
+
     let currentFileInfo;
+    let currentElementHasCss = false;
+
+    scopedCssSet.reserveCommonCssClasses(commonCss);
+
+    function getCssOriginInfo(filePath)
+    {
+        filePath = removeQueryString(filePath);
+
+        return cssOriginFileInfos.get(filePath);
+    }
+
+    function createCssOriginInfo(filePath)
+    {
+        filePath = removeQueryString(filePath);
+
+        const info =
+            {
+                filePath,
+                mtime: fs.statSync(filePath).mtimeMs,
+
+                //
+                // Because this plugin instance compiles client javascript
+                // for multiple pages, the shared scopedCssSet ends up
+                // with CSS for client javascript. In order to be able
+                // to filter this down when generating inline CSS for a
+                // single pagelater, we need to know which client JS files
+                // used which classes.
+                //
+                // The class names are tracked here.
+                //
+
+                referencedClassNames: new Set(),
+
+                isStale()
+                {
+                    return this.mtime !== fs.statSync(this.filePath).mtimeMs;
+                }
+            };
+
+        cssOriginFileInfos.set(filePath, info);
+        return info;
+    }
 
     function getNodeStringValue(node)
     {
@@ -173,7 +97,7 @@ export default function(babel)
 
             if (node.expressions.length > 0 || node.quasis.length != 1)
             {
-                err(`Javascript variables within scoped css attributes are not currently supported. If you need this, consider using a style={\`...\`} attribute instead.\n    at file://${currentFileInfo.filePath}:${node.loc.start.line}:${node.loc.start.column}`);
+                err(`Javascript variables within scoped css attributes are not currently supported in client Javascript. If you need this, consider using a style={\`...\`} attribute instead.\n    at file://${currentFileInfo.filePath}:${node.loc.start.line}:${node.loc.start.column}`);
                 return undefined;
             }
 
@@ -192,26 +116,26 @@ export default function(babel)
             //
             // Called before each file is parsed.
             //
-            // Prepare to update the global view of scoped css in this file
+            // Prepare to update the global view of scoped CSS in this file
             //
 
             currentFileInfo = getCssOriginInfo(this.filename)
 
-            if (currentFileInfo)
+            if (currentFileInfo && !currentFileInfo.isStale())
             {
-                if (cssOriginFileInfos.mtime === fs.statSync(this.filename).mtimeMs)
-                {
-                    //
-                    // We have already processed this file
-                    //
+                //
+                // We have already processed this file since it was last modified
+                //
 
-                    file.path.stop();
-                    return;
-                }
+                file.path.stop();
+                return;
             }
-            else
-                currentFileInfo = createCssOriginInfo(this.filename);
+
+            // log(`plugin-scoped-css: ${this.filename}`);
+            
+            currentFileInfo = createCssOriginInfo(this.filename);
         },
+
         visitor:
             {
                 JSXAttribute(nodePath)
@@ -224,34 +148,40 @@ export default function(babel)
                     // We'll collate these when parse exits the JSX opening node.
                     //
                     
-                    currentFileInfo.jsPathsWithCssAttributes.add(nodePath.parentPath);
+                    // currentFileInfo.jsPathsWithCssAttributes.add(nodePath.parentPath);
+                    currentElementHasCss = true;
                 },
 
                 JSXOpeningElement:
                 {
                     exit(nodePath)
                     {
-                        if (!currentFileInfo.jsPathsWithCssAttributes.has(nodePath))
+                        // if (!currentFileInfo.jsPathsWithCssAttributes.has(nodePath))
+                        if (!currentElementHasCss)
                             return;
                         
-                        currentFileInfo.jsPathsWithCssAttributes.delete(nodePath);
+                        // currentFileInfo.jsPathsWithCssAttributes.delete(nodePath);
+                        currentElementHasCss = false;
 
                         //
-                        // This JSXOpeningElement has at least one css attribute.
+                        // This JSXOpeningElement has at least one CSS attribute.
                         //
-                        // For each, convert to a class name add to the className attribute,
-                        // if present. More than one className is invalid, but in this case 
-                        // the last one 'wins').
+                        // For each, convert to a class name to add to the className attribute,
+                        // if present. More than one className attribyte is invalid, but in this
+                        // case the last one 'wins').
                         //
 
                         const attributes = nodePath.node.attributes;
                         const pathsToRemove = [];
-                        const cssClasses = [];
                         let classNamePath;
                         
                         attributes.forEach(
                             (attribute, i) =>
                             {
+                                // Skip exotic attributes like the JSXSpreadAttribute
+                                if (attribute.type != 'JSXAttribute')
+                                    return;
+
                                 if (attribute.name.name == 'className')
                                 {
                                     classNamePath = nodePath.get('attributes.' + i);
@@ -260,21 +190,22 @@ export default function(babel)
                                 
                                 if (attribute.name.name == 'css')
                                 {
-                                    pathsToRemove.push(nodePath.get('attributes.' + i));
-
                                     //
-                                    // Obtain the css code.
+                                    // Obtain the scoped CSS code and determine which CSS class should replace it.
                                     //
                                     
-                                    const cssCode = getNodeStringValue(attribute.value);
-                                    if (cssCode === undefined)
+                                    const scopedCss = getNodeStringValue(attribute.value);
+                                    if (scopedCss === undefined)
                                         throw nodePath.buildCodeFrameError(`Unhandled css attribute of type: ${attribute.value.type} in: ${generate(attribute.value).code}`);
+
+                                    // We'll want to remove the CSS attribute later
+                                    pathsToRemove.push(nodePath.get('attributes.' + i));
                                     
-                                    const cssClassName = getCssClassName(currentFileInfo, cssCode);
+                                    const cssClassName = scopedCssSet.getClassName(scopedCss);
                                     if (!cssClassName)
                                         return;
                                     
-                                    cssClasses.push(cssClassName);
+                                    currentFileInfo.referencedClassNames.add(cssClassName);
                                 }
                             });
 
@@ -294,7 +225,7 @@ export default function(babel)
                             // Already exists, append our extracted classes.
                             //
                             // If the existing value can be correctly reduced to a string, then
-                            // produce a new string with the additional css class names appended.
+                            // produce a new string with the additional CSS class names appended.
                             //
                             // If not, replace with code that will append the class names at runtime.
                             //
@@ -303,9 +234,18 @@ export default function(babel)
                             const existingClassNames = getNodeStringValue(value);
 
                             if (existingClassNames)
-                                classNamePath.node.value = t.stringLiteral([existingClassNames, ...Array.from(cssClasses)].join(' '));
+                            {
+                                classNamePath.node.value =
+                                    t.stringLiteral([existingClassNames, ...Array.from(currentFileInfo.referencedClassNames)].join(' '));
+                            }
                             else if (t.isJSXExpressionContainer(value))
-                                classNamePath.node.value = t.binaryExpression('+', value.expression, t.stringLiteral(' ' + Array.from(cssClasses).join(' ')));
+                            {
+                                classNamePath.node.value =
+                                    t.binaryExpression(
+                                        '+',
+                                        value.expression,
+                                        t.stringLiteral(' ' + Array.from(currentFileInfo.referencedClassNames).join(' ')));
+                            }
                             else
                                 throw nodePath.buildCodeFrameError(`Unhandled className attribute of type: ${value.type} in: ${generate(value).code}`);
                         }
@@ -315,12 +255,13 @@ export default function(babel)
                             // No existing className attribute on this JSX node, add one with our generated classes.
                             //
 
-                            const classNameAttribute = t.jsxAttribute(t.jsxIdentifier("className"), t.stringLiteral(Array.from(cssClasses).join(' ')));
+                            const classNameAttribute = t.jsxAttribute(t.jsxIdentifier("className"), t.stringLiteral(Array.from(currentFileInfo.referencedClassNames).join(' ')));
                             classNamePath = nodePath.unshiftContainer('attributes', classNameAttribute);
                         }
                     }
                 }
             },
+        
         post()
         {
             //
