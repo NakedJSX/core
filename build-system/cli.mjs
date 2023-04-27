@@ -295,12 +295,3 @@ export async function main()
     else
         await nakedJsx.build();
 }
-
-//
-// The standalone npx nakedjsx command relies on being able
-// to import main and selectively invoke it. So only automatically
-// invoke main if this file is being executed directly.
-//
-
-if (process.argv[1] === url.fileURLToPath(import.meta.url))
-    await main();
