@@ -45,6 +45,8 @@ export class NakedJSX
     #developmentServer;
     #developmentClientJs;
 
+    #bundleMode;
+
     #srcDir;
     #dstDir;
     #dstAssetDir;
@@ -86,12 +88,15 @@ export class NakedJSX
     constructor(
         rootDir,
         {
+            bundleMode = false,
             configOverride
         } = {})
     {
         log(`NakedJSX initialising (Node ${process.version})`);
 
         rootDir = absolutePath(rootDir);
+
+        this.#bundleMode = bundleMode;
 
         //
         // All config paths are relative to the pages root dir
@@ -517,11 +522,19 @@ export class NakedJSX
 
         if (this.#building)
             abort('#buildAll called while building');
-
-        log(`Building ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
-
+        
         this.#buildStartTime    = new Date();
         this.#building          = true;
+        this.#pagesWithErrors   = new Set();
+
+        if (this.#pagesToBuild.size == 0)
+        {
+            log(`No pages to build.`);
+            this.#onBuildComplete();
+            return;
+        }
+
+        log(`Building ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
 
         if (this.#commonCssFile)
             this.#commonCss = loadCss((await fsp.readFile(this.#commonCssFile)).toString());
@@ -545,8 +558,7 @@ export class NakedJSX
         // This allows async events to safely queue up pages to build, during the build
         this.#pagesInProgress   = this.#pagesToBuild;
         this.#pagesToBuild      = new Set();
-        this.#pagesWithErrors   = new Set();
-
+        
         //
         // Start building.
         //
@@ -1236,8 +1248,14 @@ export class NakedJSX
                 external:
                     (id, parent, isResolved) =>
                     {
-                        if (id.startsWith('node:'))
-                            return true;
+                        //
+                        // In bundle mode, we want rollup to rollup all imports,
+                        // as the target js may not be running in an environment
+                        // that has anything installed (like @nakedjsx/core itself)
+                        //
+
+                        if (this.#bundleMode)
+                            return false;
                         
                         if (id.includes('/jsx/') || id.endsWith('/jsx'))
                             return false;
@@ -1377,24 +1395,27 @@ export class NakedJSX
         }
 
         if (!this.#pagesInProgress.size)
+            this.#onBuildComplete();
+    }
+
+    #onBuildComplete()
+    {
+        this.#building = false;
+
+        if (this.#pagesToBuild.size)
         {
-            this.#building = false;
-
-            if (this.#pagesToBuild.size)
-            {
-                this.#buildAll();
-                return;
-            }
-
-            if (this.#pagesWithErrors.size)
-                err(`Finished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.`);
-            else
-                log(`Finished build after ${this.#getBuildDurationSeconds()} seconds.`);
-
-            if (!this.#developmentMode)
-                process.exit();
-            
-            log(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit\nREADY`);
+            this.#buildAll();
+            return;
         }
+
+        if (this.#pagesWithErrors.size)
+            err(`Finished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.`);
+        else
+            log(`Finished build after ${this.#getBuildDurationSeconds()} seconds.`);
+
+        if (!this.#developmentMode)
+            process.exit();
+        
+        log(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit\nREADY`);
     }
 }

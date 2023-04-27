@@ -5,7 +5,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import url from 'node:url';
 
 import { NakedJSX } from './nakedjsx.mjs';
 import { log, fatal, camelToKebabCase, absolutePath } from './util.mjs';
@@ -256,7 +255,7 @@ async function processCliArguments()
     }
 }
 
-export async function main()
+export async function main({ bundleMode = false } = {})
 {
     // [0] == node, [1] == this script or something directly or indirectly importing it
     args = process.argv.slice(2);
@@ -285,9 +284,9 @@ export async function main()
     let nakedJsx;
 
     if (configDirty)
-        nakedJsx = new NakedJSX(rootDir, { configOverride: config });
+        nakedJsx = new NakedJSX(rootDir, { bundleMode, configOverride: config });
     else
-        nakedJsx = new NakedJSX(rootDir);
+        nakedJsx = new NakedJSX(rootDir, { bundleMode });
 
     if (developmentMode)
         await nakedJsx.developmentMode();
