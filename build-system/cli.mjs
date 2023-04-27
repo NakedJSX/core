@@ -4,8 +4,9 @@
 // This tool is just a simple config building and invocation wrapper.
 //
 
-import fs from 'node:fs'
-import path from 'node:path'
+import fs from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
 
 import { NakedJSX } from './nakedjsx.mjs';
 import { log, fatal, camelToKebabCase, absolutePath } from './util.mjs';
@@ -20,6 +21,10 @@ const emptyConfig =
 
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
+
+let args;
+let rootDir;
+let config;
 
 function configPath(filepath)
 {
@@ -157,6 +162,7 @@ function usage()
         optionsHelp += `    ${flag}${argText}\n`;
     }
 
+    // TOOD: Update usage to include yarn version
     console.log(
 `
 Usage:
@@ -195,7 +201,7 @@ function determineRootDir()
     return rootDir;
 }
 
-function loadBaseConfig(rootDir)
+function loadBaseConfig()
 {
     //
     // Attempt to load config from pages dir
@@ -251,38 +257,50 @@ async function processCliArguments()
     }
 }
 
-// [0] == node, [1] == this script
-const args = process.argv.slice(2);
-
-const rootDir = determineRootDir()
-const config  = loadBaseConfig(rootDir);
-
-const configBefore = JSON.stringify(config);
-await processCliArguments(config);
-let configDirty = JSON.stringify(config) !== configBefore;
-
-if (configSave)
+export async function main()
 {
-    const configPath = rootDir + path.sep + configFilename;
-    log(`Writing config to ${configPath}`);
+    // [0] == node, [1] == this script or something directly or indirectly importing it
+    args = process.argv.slice(2);
 
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
-    configDirty = false;
+    rootDir = determineRootDir(args)
+    config  = loadBaseConfig(rootDir);
+
+    const configBefore = JSON.stringify(config);
+    await processCliArguments(args, config);
+    let configDirty = JSON.stringify(config) !== configBefore;
+
+    if (configSave)
+    {
+        const configPath = rootDir + path.sep + configFilename;
+        log(`Writing config to ${configPath}`);
+
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
+        configDirty = false;
+    }
+
+    //
+    // If the config is dirty, pass it directly to @nakedjsx/core.
+    // Otherwise we let it read the config file from root dir.
+    //
+
+    let nakedJsx;
+
+    if (configDirty)
+        nakedJsx = new NakedJSX(rootDir, { configOverride: config });
+    else
+        nakedJsx = new NakedJSX(rootDir);
+
+    if (developmentMode)
+        await nakedJsx.developmentMode();
+    else
+        await nakedJsx.build();
 }
 
 //
-// If the config is dirty, pass it directly to @nakedjsx/core.
-// Otherwise we let it read the config file from root dir.
+// The standalone npx nakedjsx command relies on being able
+// to import main and selectively invoke it. So only automatically
+// invoke main if this file is being executed directly.
 //
 
-let nakedJsx;
-
-if (configDirty)
-    nakedJsx = new NakedJSX(rootDir, { configOverride: config });
-else
-    nakedJsx = new NakedJSX(rootDir);
-
-if (developmentMode)
-    await nakedJsx.developmentMode();
-else
-    await nakedJsx.build();
+if (process.argv[1] === url.fileURLToPath(import.meta.url))
+    await main();
