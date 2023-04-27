@@ -29,9 +29,8 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
 const resolveModule = createRequire(import.meta.url).resolve;
 
-export const configFilename = '.nakedjsx.json';
-
-export const emptyConfig =
+const configFilename = '.nakedjsx.json';
+const emptyConfig =
     {
         importMapping:              {},
         browserslistTargetQuery:    'defaults',
@@ -814,7 +813,7 @@ export class NakedJSX
                         },
                         asset);
 
-        throw new Error(`Unknown import plugin type '?${importType}' for import ${asset.id}.`);
+        throw new Error(`Unknown import plugin id '${importType}' for import ${asset.id}.`);
     }
 
     #getImportPlugin()
