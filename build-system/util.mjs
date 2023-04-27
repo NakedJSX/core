@@ -2,20 +2,36 @@ import path from 'node:path';
 
 export const startTime = new Date().getTime();
 
-export const log =
-	(message) =>
-	{
-		const thisTime = new Date().getTime();
-		const timeSinceStart = thisTime - startTime;
+function formatLogMessaage(message, prefix = '')
+{
+	const thisTime = new Date().getTime();
+	const timeSinceStart = thisTime - startTime;
+	const [, leadingNewlines] = message.match(/^(\n*)/);
+	const followingMessage = message.substring(leadingNewlines.length);
 
-		const [, leadingNewlines] = message.match(/^(\n*)/);
-		const followingMessage = message.substring(leadingNewlines.length);
-		console.log(`${leadingNewlines}${timeSinceStart}: ${followingMessage}`);
-	};
+	return `${leadingNewlines}${timeSinceStart}: ${prefix}${followingMessage}`;
+}
 
-export const warn = console.warn.bind(console);
+export function log(message)
+{
+	console.log(formatLogMessaage(message));
+}
 
-export const err = console.error.bind(console);
+export function warn(message)
+{
+	console.warn(`\x1b[1m${formatLogMessaage(message, 'WARNING: ')}\x1b[22m`);
+}
+
+export function err(message)
+{
+	console.error(`\x1b[1m${formatLogMessaage(message, 'ERROR: ')}\x1b[22m`);
+}
+
+export function fatal(message)
+{
+    err(message);
+    process.exit(1);
+}
 
 export function isExternalImport(id)
 {
@@ -86,4 +102,9 @@ export function absolutePath(absoluteOrRelativePath)
         return path.normalize(absoluteOrRelativePath);
     else
         return path.normalize(process.cwd() + path.sep + absoluteOrRelativePath);
+}
+
+export function camelToKebabCase(camel)
+{
+    return camel.replace(/[A-Z]/g, char => '-' + char.toLowerCase());
 }
