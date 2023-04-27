@@ -456,7 +456,7 @@ export class NakedJSX
 
     #matchPageJsFile(filename)
     {
-        const pageEntryMatch    = /^(.*)-(client|html|config)\.js$/;
+        const pageEntryMatch    = /^(.*)-(client|html|config)\.m?js$/;
         const match             = filename.match(pageEntryMatch);
 
         if (match)
