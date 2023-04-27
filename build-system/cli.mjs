@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 
 //
 // This tool is just a simple config building and invocation wrapper.
