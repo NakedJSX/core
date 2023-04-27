@@ -27,9 +27,11 @@ export function err(message)
 	console.error(`\x1b[1m${formatLogMessaage(message, 'ERROR: ')}\x1b[22m`);
 }
 
-export function fatal(message)
+export function fatal(message, lastHurrahCallback)
 {
     err(message);
+	if (lastHurrahCallback)
+		lastHurrahCallback();
     process.exit(1);
 }
 

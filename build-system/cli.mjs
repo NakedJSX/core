@@ -180,7 +180,7 @@ ${optionsHelp}`);
 function determineRootDir()
 {
     if (args < 1)
-        fatal('<pages-directory> is required.', true);
+        fatal('<pages-directory> is required.', usage);
 
     const rootDir = args.shift();
 
@@ -242,13 +242,13 @@ async function processCliArguments()
         const option = options[flag];
 
         if (!option)
-            fatal(`Unknown flag: ${flag}`);
+            fatal(`Unknown flag: ${flag}`, usage);
         
         const optionArguments = {};
         for (const argCamel of option.args || [])
         {
             if (args.length == 0)
-                fatal(`${flag} missing required <${camelToKebabCase(argCamel)}> argument`, true);
+                fatal(`${flag} missing required <${camelToKebabCase(argCamel)}> argument`, usage);
             
             optionArguments[argCamel] = args.shift();
         }
