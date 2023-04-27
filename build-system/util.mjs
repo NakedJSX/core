@@ -4,6 +4,9 @@ export const startTime = new Date().getTime();
 
 function formatLogMessaage(message, prefix = '')
 {
+	if (typeof message !== 'string')
+		message = '' + message;
+
 	const thisTime = new Date().getTime();
 	const timeSinceStart = thisTime - startTime;
 	const [, leadingNewlines] = message.match(/^(\n*)/);
