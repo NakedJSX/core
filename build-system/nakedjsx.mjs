@@ -834,7 +834,7 @@ export class NakedJSX
             async resolveId(id, importer, options)
             {
                 //
-                // For static HTML generating js, ensure that @nakedjsx imports
+                // For static HTML generating JS, ensure that @nakedjsx imports
                 // point to this instance of NakedJSX.
                 //
                 // This is key for the standalone npx nakedjsx tool to be able
@@ -844,33 +844,22 @@ export class NakedJSX
 
                 if (!forClientJs && id.startsWith('@nakedjsx/'))
                 {
-                    const thisNakedJsx = path.normalize(path.join(fileURLToPath(import.meta.url), '../../..'));
+                    const result = { id: resolveModule(id) };
 
-                    //
-                    // TODO: extract exports from relevant package.json files instead of hard coding.
-                    // Or set up a registration system.
-                    // Fow now, all @nakedjsx/* exports for generating HTML need to be supported here.
-                    //
+                    if (result.id.endsWith('.jsx'))
+                    {
+                        //
+                        // Official @nakedjsx JSX compoents live within .jsx files.
+                        // We can't treat these as external as they need to be transpiled,
+                        // not imported directly at HTML generation time.
+                        //
 
-                    if (id === '@nakedjsx/core/jsx')
-                        return  {
-                                    id: path.join(thisNakedJsx, 'core/runtime/jsx.mjs'),
-                                    external: true
-                                };
+                        result.external = false;
+                    }
+                    else
+                        result.external = true;
                     
-                    if (id === '@nakedjsx/core/page')
-                        return  {
-                                    id: path.join(thisNakedJsx, 'core/runtime/page.mjs'),
-                                    external: true
-                                };
-
-                    if (id === '@nakedjsx/plugin-asset-image/jsx')
-                        return  {
-                                    id: path.join(thisNakedJsx, 'plugin-asset-image/jsx/index.jsx'),
-                                    external: false // the JSX will need to be compiled
-                                };
-                    
-                    throw Error('Unhandled HTML JS @nakedjsx import: ' + id);
+                    return result;
                 }
 
                 if (options.isEntry)
