@@ -206,7 +206,7 @@ function loadBaseConfig()
     //
 
     const config = Object.assign({}, emptyConfig);
-    const configFile = rootDir + path.sep + configFilename;
+    const configFile = path.join(rootDir, configFilename);
 
     if (!fs.existsSync(configFile))
     {
@@ -269,7 +269,7 @@ export async function main()
 
     if (configSave)
     {
-        const configPath = rootDir + path.sep + configFilename;
+        const configPath = path.join(rootDir, configFilename);
         log(`Writing config to ${configPath}`);
 
         fs.writeFileSync(configPath, JSON.stringify(config, null, 4));
@@ -282,7 +282,7 @@ export async function main()
     //
 
     const options = {};
-    
+
     if (configDirty)
         options.configOverride = config;
 

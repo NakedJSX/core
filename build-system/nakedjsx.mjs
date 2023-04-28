@@ -14,7 +14,7 @@ import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 
-import { ScopedCssSet, loadCss } from './css.mjs'
+import { loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, abort, isExternalImport, absolutePath } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
@@ -178,7 +178,7 @@ export class NakedJSX
             fs.mkdirSync(this.#dstDir); 
         }
         
-        this.#dstAssetDir       = this.#dstDir + path.sep + 'asset';
+        this.#dstAssetDir = path.join(this.#dstDir, 'asset');
 
         //
         // Common / external CSS
@@ -1203,9 +1203,7 @@ export class NakedJSX
                                 //
 
                                 for (let output of assets)
-                                {
                                     promises.push(this.#emitFile(page, output.fileName, output.source));
-                                }
 
                                 //
                                 // Output client JS if we're not inlining it

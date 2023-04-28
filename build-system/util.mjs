@@ -106,7 +106,7 @@ export function absolutePath(absoluteOrRelativePath)
 	if (path.isAbsolute(absoluteOrRelativePath))
         return path.normalize(absoluteOrRelativePath);
     else
-        return path.normalize(process.cwd() + path.sep + absoluteOrRelativePath);
+        return path.normalize(path.join(process.cwd(), absoluteOrRelativePath));
 }
 
 export function camelToKebabCase(camel)
