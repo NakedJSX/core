@@ -834,28 +834,27 @@ export class NakedJSX
             async resolveId(id, importer, options)
             {
                 //
-                // For static HTML generating JS, ensure that @nakedjsx imports
-                // point to this instance of NakedJSX.
+                // Ensure that @nakedjsx imports point to this instance of NakedJSX.
                 //
                 // This is key for the standalone npx nakedjsx tool to be able
                 // to use its bundled copy of @nakedjsx/core to operate on files
                 // that live outside of a node project that directly imports @nakedjsx.
                 //
 
-                if (!forClientJs && id.startsWith('@nakedjsx/'))
+                if (id.startsWith('@nakedjsx/'))
                 {
                     const result = { id: resolveModule(id) };
 
-                    if (result.id.endsWith('.jsx'))
-                    {
-                        //
-                        // Official @nakedjsx JSX compoents live within .jsx files.
-                        // We can't treat these as external as they need to be transpiled,
-                        // not imported directly at HTML generation time.
-                        //
+                    //
+                    // Client JS can't contain any import statements, so no imports can be external.
+                    //
+                    // For HTML JS, official @nakedjsx JSX components live within .jsx files.
+                    // We can't treat these as external as they need to be transpiled,
+                    // not imported directly at HTML generation time.
+                    //
 
+                    if (forClientJs || result.id.endsWith('.jsx'))
                         result.external = false;
-                    }
                     else
                         result.external = true;
                     
