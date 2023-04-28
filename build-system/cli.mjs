@@ -255,7 +255,7 @@ async function processCliArguments()
     }
 }
 
-export async function main({ bundleMode = false } = {})
+export async function main()
 {
     // [0] == node, [1] == this script or something directly or indirectly importing it
     args = process.argv.slice(2);
@@ -281,12 +281,12 @@ export async function main({ bundleMode = false } = {})
     // Otherwise we let it read the config file from root dir.
     //
 
-    let nakedJsx;
-
+    const options = {};
+    
     if (configDirty)
-        nakedJsx = new NakedJSX(rootDir, { bundleMode, configOverride: config });
-    else
-        nakedJsx = new NakedJSX(rootDir, { bundleMode });
+        options.configOverride = config;
+
+    const nakedJsx = new NakedJSX(rootDir, options);
 
     if (developmentMode)
         await nakedJsx.developmentMode();

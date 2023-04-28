@@ -45,8 +45,6 @@ export class NakedJSX
     #developmentServer;
     #developmentClientJs;
 
-    #bundleMode;
-
     #srcDir;
     #dstDir;
     #dstAssetDir;
@@ -88,15 +86,12 @@ export class NakedJSX
     constructor(
         rootDir,
         {
-            bundleMode = false,
             configOverride
         } = {})
     {
         log(`NakedJSX initialising (Node ${process.version})`);
 
         rootDir = absolutePath(rootDir);
-
-        this.#bundleMode = bundleMode;
 
         //
         // All config paths are relative to the pages root dir
@@ -828,7 +823,7 @@ export class NakedJSX
         throw new Error(`Unknown import plugin id '${importType}' for import ${asset.id}.`);
     }
 
-    #getImportPlugin()
+    #getImportPlugin(forClientJs)
     {
         const builder   = this;
         const cache     = this.#importLoadCache;
@@ -838,6 +833,46 @@ export class NakedJSX
 
             async resolveId(id, importer, options)
             {
+                //
+                // For static HTML generating js, ensure that @nakedjsx imports
+                // point to this instance of NakedJSX.
+                //
+                // This is key for the standalone npx nakedjsx tool to be able
+                // to use its bundled copy of @nakedjsx/core to operate on files
+                // that live outside of a node project that directly imports @nakedjsx.
+                //
+
+                if (!forClientJs && id.startsWith('@nakedjsx/'))
+                {
+                    const thisNakedJsx = path.normalize(path.join(fileURLToPath(import.meta.url), '../../..'));
+
+                    //
+                    // TODO: extract exports from relevant package.json files instead of hard coding.
+                    // Or set up a registration system.
+                    // Fow now, all @nakedjsx/* exports for generating HTML need to be supported here.
+                    //
+
+                    if (id === '@nakedjsx/core/jsx')
+                        return  {
+                                    id: path.join(thisNakedJsx, 'core/runtime/jsx.mjs'),
+                                    external: true
+                                };
+                    
+                    if (id === '@nakedjsx/core/page')
+                        return  {
+                                    id: path.join(thisNakedJsx, 'core/runtime/page.mjs'),
+                                    external: true
+                                };
+
+                    if (id === '@nakedjsx/plugin-asset-image/jsx')
+                        return  {
+                                    id: path.join(thisNakedJsx, 'plugin-asset-image/jsx/index.jsx'),
+                                    external: false // the JSX will need to be compiled
+                                };
+                    
+                    throw Error('Unhandled HTML JS @nakedjsx import: ' + id);
+                }
+
                 if (options.isEntry)
                     return null;
 
@@ -884,6 +919,7 @@ export class NakedJSX
                     }
                 }
 
+                // This import isn't one that we handle, defer to other plugins
                 return null;
             },
 
@@ -1052,7 +1088,7 @@ export class NakedJSX
                 mapCachePlugin(this.#getBabelInputPlugin(forClientJs), this.#babelInputCache),
 
                 // Our rollup plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
-                mapCachePlugin(this.#getImportPlugin(), this.#babelInputCache),
+                mapCachePlugin(this.#getImportPlugin(forClientJs), this.#babelInputCache),
 
                 // Allow page code to make use of esm imports
                 mapCachePlugin(nodeResolve(), this.#nodeResolveCache),
@@ -1249,26 +1285,31 @@ export class NakedJSX
                     (id, parent, isResolved) =>
                     {
                         //
-                        // In bundle mode, we want rollup to rollup all imports,
-                        // as the target js may not be running in an environment
-                        // that has anything installed (like @nakedjsx/core itself)
+                        // Returning true from here prevents rollup from rolling up an
+                        // import into the destination file.
                         //
 
-                        if (this.#bundleMode)
-                            return false;
-                        
+                        //
+                        // This first test is intended to allow compilation of 3rd party
+                        // named exports containing actual JSX. For example via something like:
+                        //
+                        // import { ComponentOne, ComponentTwo } from 'third-party-library/jsx'
+                        //
+                        // Probably need to switch this to some sort of registration system.
+                        //
+
                         if (id.includes('/jsx/') || id.endsWith('/jsx'))
                             return false;
                         
-                        if (id.startsWith('@nakedjsx'))
-                            return true;
-                        
-                        if (id.includes('/@nakedjsx/'))
-                            return true;
-
                         if (isExternalImport(id))
                         {
-                            log(id + ' from ' + parent + ' (' + isResolved + ')');
+                            log(`Not rolling up ${id} from ${parent}`);
+
+                            //
+                            // We don't need to rollup node libraries for HTML JS that
+                            // runs at compile time.
+                            //
+
                             return true;
                         }
 
@@ -1288,8 +1329,6 @@ export class NakedJSX
             .then(
                 (bundle) =>
                 {
-                    // log(`Rolled up ${page.uriPath}`);
-
                     //
                     // Also watch the HTML JS imports for changes.
                     //
@@ -1305,8 +1344,6 @@ export class NakedJSX
                             (output) =>
                             {
                                 bundle.close();
-
-                                // log(`Written bundle ${page.uriPath}`);
                                 
                                 //
                                 // In dev mode, inject the script that long polls the server for changes.
