@@ -57,7 +57,7 @@ export class DevServer
             () =>
             {
                 this.#serverUrl = `http://localhost:${serverPort}`;
-                log(`Development web server started on ${this.#serverUrl}\n`);
+                log(`Development web server started\n`);
             });
         server.listen(serverPort);
     }

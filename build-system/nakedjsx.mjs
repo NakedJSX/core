@@ -16,7 +16,7 @@ import { nodeResolve } from '@rollup/plugin-node-resolve';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, fatal, isExternalImport, absolutePath } from './util.mjs';
+import { log, warn, err, fatal, isExternalImport, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import WorkerPool from './thread/pool.mjs';
 
@@ -62,7 +62,6 @@ export class NakedJSX
     #started            = false;
     #initialising       = true;
     #building           = false;
-    #buildStartTime;
     
     #pages              = {};
     #pagesToBuild       = new Set();
@@ -357,9 +356,9 @@ https://discord.gg/BXQDtub2fS
      
     #startWatchingFiles()
     {
-        log(`Build server starting\n` +
+        log(`Build server starting:\n` +
             `   input dir: ${this.#srcDir}\n` +
-            `  output dir: ${this.#dstDir}\n`);
+            `  output dir: ${this.#dstDir}`);
 
         //
         // Watcher dedicated to looking for new pages
@@ -543,7 +542,6 @@ https://discord.gg/BXQDtub2fS
         if (this.#building)
             fatal('#buildAll called while building');
         
-        this.#buildStartTime    = new Date();
         this.#building          = true;
         this.#pagesWithErrors   = new Set();
 
@@ -553,6 +551,8 @@ https://discord.gg/BXQDtub2fS
             this.#onBuildComplete();
             return;
         }
+
+        enableBenchmark(true);
 
         log.setPrompt('Building ...');
         log(`\nBuilding ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
@@ -683,12 +683,6 @@ https://discord.gg/BXQDtub2fS
                 page.abortController.abort(error);
             }
         }
-    }
-
-    #getBuildDurationSeconds()
-    {
-        const durationMs = new Date().getTime() - this.#buildStartTime.getTime();
-        return (durationMs / 1000).toFixed(3);
     }
 
     #getBabelInputPlugin(forClientJs)
@@ -1444,9 +1438,11 @@ https://discord.gg/BXQDtub2fS
         }
 
         if (this.#pagesWithErrors.size)
-            err(`Finished build (with errors) after ${this.#getBuildDurationSeconds()} seconds.\nNOTE: Some async tasks may yet complete and produce log output.`);
+            err(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
         else
-            log(`Finished build after ${this.#getBuildDurationSeconds()} seconds.`);
+            log(`Finished build.`);
+        
+        enableBenchmark(false);
 
         if (!this.#developmentMode)
         {

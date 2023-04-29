@@ -1,6 +1,7 @@
 import path from 'node:path';
 
-export const startTime = new Date().getTime();
+let benchmarkEnable = false;
+let benchmarkStart  = null;
 
 const boldOn        = process.stdout.isTTY ? '\x1b[1m'  : '';
 const boldOff       = process.stdout.isTTY ? '\x1b[22m' : '';
@@ -15,7 +16,7 @@ let promptText      = '\n';
 // doesn't clear the terminal line before the first log output.
 //
 
-console.log(promptText);
+console.log('');
 
 function setPrompt(newPrompt)
 {
@@ -28,18 +29,42 @@ function setPrompt(newPrompt)
         console.log(`\n${newPrompt}`);
 }
 
+export function enableBenchmark(enable)
+{
+    if (enable)
+    {
+        if (benchmarkEnable)
+            return;
+
+        benchmarkEnable = true;
+        benchmarkStart  = new Date().getTime();
+    } else {
+        benchmarkEnable = false;
+        benchmarkStart  = null;
+    }
+}
+
 function formatLogMessaage(message, prefix = '')
 {
     if (typeof message !== 'string')
         message = '' + message;
+    
+    let finalMessage;
+    
+    if (benchmarkEnable)
+    {
+        const thisTime              = new Date().getTime();
+        const timeSinceStart        = thisTime - benchmarkStart;
+        const [, leadingNewlines]   = message.match(/^(\n*)/);
+        const followingMessage      = message.substring(leadingNewlines.length);
 
-    const thisTime = new Date().getTime();
-    const timeSinceStart = thisTime - startTime;
-    const [, leadingNewlines] = message.match(/^(\n*)/);
-    const followingMessage = message.substring(leadingNewlines.length);
+        finalMessage = `${leadingNewlines}${timeSinceStart}: ${prefix}${followingMessage}`;
+    } else {
+        finalMessage = `${prefix}${message}`;
+    }
 
     if (process.stdout.isTTY)
-        return `${promptClear}\r${leadingNewlines}${timeSinceStart}: ${prefix}${followingMessage}\n${promptText}`;
+        return `${promptClear}\r${finalMessage}\n${promptText}`;
     else
         return `${leadingNewlines}${timeSinceStart}: ${prefix}${followingMessage}`;
 }
