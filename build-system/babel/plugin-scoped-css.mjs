@@ -1,85 +1,13 @@
 import fs from 'node:fs';
 
-import pkg_generator from '@babel/generator'
-const generate = pkg_generator.default;
-
-import { log, err, removeQueryString } from '../util.mjs';
-import { ScopedCssSet } from '../css.mjs';
-
-const cssOriginFileInfos = new Map();
-const scopedCssSet = new ScopedCssSet();
-
-// Return a ScopedCssSet containing only CSS relevant to files in moduleIds
-export function scopedCssSetUsedByModules(moduleIds)
-{
-    if (!moduleIds)
-        return new ScopedCssSet(scopedCssSet.reserved);
-
-    const uniqueClassNames = new Set();
-
-    for (let moduleId of moduleIds)
-    {
-        const fileInfo = cssOriginFileInfos.get(moduleId);
-        if (!fileInfo)
-            continue;
-
-        for (let className of fileInfo.referencedClassNames)
-            uniqueClassNames.add(className);
-    }
-
-    return scopedCssSet.subset(uniqueClassNames.keys());
-}
+import { err } from '../util.mjs';
 
 // babel plugin implementation
 export default function(babel, options)
 {
     const t = babel.types;
 
-    const { commonCss } = options;
-
-    let currentFileInfo;
-    let currentElementHasCss = false;
-
-    scopedCssSet.reserveCommonCssClasses(commonCss);
-
-    function getCssOriginInfo(filePath)
-    {
-        filePath = removeQueryString(filePath);
-
-        return cssOriginFileInfos.get(filePath);
-    }
-
-    function createCssOriginInfo(filePath)
-    {
-        filePath = removeQueryString(filePath);
-
-        const info =
-            {
-                filePath,
-                mtime: fs.statSync(filePath).mtimeMs,
-
-                //
-                // Because this plugin instance compiles client javascript
-                // for multiple pages, the shared scopedCssSet ends up
-                // with CSS for client javascript. In order to be able
-                // to filter this down when generating inline CSS for a
-                // single pagelater, we need to know which client JS files
-                // used which classes.
-                //
-                // The class names are tracked here.
-                //
-
-                referencedClassNames: new Set(),
-
-                isStale()
-                {
-                    return this.mtime !== fs.statSync(this.filePath).mtimeMs;
-                }
-            };
-
-        cssOriginFileInfos.set(filePath, info);
-        return info;
-    }
+    const { scopedCssSet } = options;
 
     function getNodeStringValue(node)
     {
@@ -111,164 +39,66 @@ export default function(babel, options)
     }
 
     return {
-        pre(file)
-        {
-            //
-            // Called before each file is parsed.
-            //
-            // Prepare to update the global view of scoped CSS in this file
-            //
-
-            currentFileInfo = getCssOriginInfo(this.filename)
-
-            if (currentFileInfo && !currentFileInfo.isStale())
-            {
-                //
-                // We have already processed this file since it was last modified
-                //
-
-                file.path.stop();
-                return;
-            }
-
-            // log(`plugin-scoped-css: ${this.filename}`);
-            
-            currentFileInfo = createCssOriginInfo(this.filename);
-        },
-
         visitor:
             {
-                JSXAttribute(nodePath)
+                CallExpression(nodePath, pluginPass)
                 {
-                    if (nodePath.node.name.name !== 'css')
+                    const callee = nodePath.node.callee;
+
+                    if (callee.type !== 'MemberExpression')
+                        return;
+
+                    if (callee.object.name !== 'JSX' || callee.property.name !== 'CreateElement')
+                        return;
+
+                    //
+                    // It's a call to JSX.CreateElement(tagName, props, ...children).
+                    // Do the props contain "css": ... ?
+                    //
+
+                    if (nodePath.node.arguments[1].type !== 'ObjectExpression')
+                        return;
+                    
+                    const objectPath        = nodePath.get('arguments.1');
+                    const propsPath         = objectPath.get('properties');
+                    const cssPropPath       = propsPath.find(prop => prop.node.key.name === 'css');
+                    const classNamePropPath = propsPath.find(prop => prop.node.key.name === 'className');
+                    
+                    if (!cssPropPath)
                         return;
                     
                     //
-                    // The current JSX opening element has at least one css="..." attribute.
-                    // We'll collate these when parse exits the JSX opening node.
+                    // This call to JSX.CreateElement() has a prop named 'css'.
+                    // It's time to convert this scoped CSS into a class prop.
                     //
-                    
-                    // currentFileInfo.jsPathsWithCssAttributes.add(nodePath.parentPath);
-                    currentElementHasCss = true;
-                },
 
-                JSXOpeningElement:
-                {
-                    exit(nodePath)
+                    const scopedCss = getNodeStringValue(cssPropPath.node.value);
+
+                    // Remove the css prop no matter what
+                    cssPropPath.remove();
+
+                    if (!scopedCss)
+                        return;
+
+                    const cssClassName = scopedCssSet.getClassName(scopedCss);
+                    if (!cssClassName)
+                        return;
+
+                    //
+                    // And now append / add the className prop
+                    //
+
+                    if (classNamePropPath)
                     {
-                        // if (!currentFileInfo.jsPathsWithCssAttributes.has(nodePath))
-                        if (!currentElementHasCss)
-                            return;
-                        
-                        // currentFileInfo.jsPathsWithCssAttributes.delete(nodePath);
-                        currentElementHasCss = false;
-
-                        //
-                        // This JSXOpeningElement has at least one CSS attribute.
-                        //
-                        // For each, convert to a class name to add to the className attribute,
-                        // if present. More than one className attribyte is invalid, but in this
-                        // case the last one 'wins').
-                        //
-
-                        const attributes = nodePath.node.attributes;
-                        const pathsToRemove = [];
-                        let classNamePath;
-                        
-                        attributes.forEach(
-                            (attribute, i) =>
-                            {
-                                // Skip exotic attributes like the JSXSpreadAttribute
-                                if (attribute.type != 'JSXAttribute')
-                                    return;
-
-                                if (attribute.name.name == 'className')
-                                {
-                                    classNamePath = nodePath.get('attributes.' + i);
-                                    return;
-                                }
-                                
-                                if (attribute.name.name == 'css')
-                                {
-                                    //
-                                    // Obtain the scoped CSS code and determine which CSS class should replace it.
-                                    //
-                                    
-                                    const scopedCss = getNodeStringValue(attribute.value);
-                                    if (scopedCss === undefined)
-                                        throw nodePath.buildCodeFrameError(`Unhandled css attribute of type: ${attribute.value.type} in: ${generate(attribute.value).code}`);
-
-                                    // We'll want to remove the CSS attribute later
-                                    pathsToRemove.push(nodePath.get('attributes.' + i));
-                                    
-                                    const cssClassName = scopedCssSet.getClassName(scopedCss);
-                                    if (!cssClassName)
-                                        return;
-                                    
-                                    currentFileInfo.referencedClassNames.add(cssClassName);
-                                }
-                            });
-
-                        //
-                        // Remove the css="..." attributes from the JSX node
-                        //
-                        
-                        pathsToRemove.forEach(pathToRemove => pathToRemove.remove());
-                        
-                        //
-                        // Finally, ensure there is a className attribute, and then populate it with extracted classes
-                        //
-
-                        if (classNamePath)
-                        {
-                            //
-                            // Already exists, append our extracted classes.
-                            //
-                            // If the existing value can be correctly reduced to a string, then
-                            // produce a new string with the additional CSS class names appended.
-                            //
-                            // If not, replace with code that will append the class names at runtime.
-                            //
-
-                            const value = classNamePath.node.value;
-                            const existingClassNames = getNodeStringValue(value);
-
-                            if (existingClassNames)
-                            {
-                                classNamePath.node.value =
-                                    t.stringLiteral([existingClassNames, ...Array.from(currentFileInfo.referencedClassNames)].join(' '));
-                            }
-                            else if (t.isJSXExpressionContainer(value))
-                            {
-                                classNamePath.node.value =
-                                    t.binaryExpression(
-                                        '+',
-                                        value.expression,
-                                        t.stringLiteral(' ' + Array.from(currentFileInfo.referencedClassNames).join(' ')));
-                            }
-                            else
-                                throw nodePath.buildCodeFrameError(`Unhandled className attribute of type: ${value.type} in: ${generate(value).code}`);
-                        }
-                        else
-                        {
-                            //
-                            // No existing className attribute on this JSX node, add one with our generated classes.
-                            //
-
-                            const classNameAttribute = t.jsxAttribute(t.jsxIdentifier("className"), t.stringLiteral(Array.from(currentFileInfo.referencedClassNames).join(' ')));
-                            classNamePath = nodePath.unshiftContainer('attributes', classNameAttribute);
-                        }
+                        const classNames = `${cssClassName} ${getNodeStringValue(classNamePropPath.node.value)}`;
+                        classNamePropPath.node.value = t.stringLiteral(classNames);
+                    }
+                    else
+                    {
+                        const classNameProp = t.objectProperty(t.identifier("className"), t.stringLiteral(cssClassName));
+                        objectPath.pushContainer('properties', classNameProp);
                     }
                 }
-            },
-        
-        post()
-        {
-            //
-            // Cleanup state set in pre()
-            //
-            
-            currentFileInfo = undefined;
-        }
+            }
     };
 };

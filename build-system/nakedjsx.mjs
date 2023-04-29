@@ -14,12 +14,11 @@ import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 
-import { loadCss } from './css.mjs'
+import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, abort, isExternalImport, absolutePath } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import WorkerPool from './thread/pool.mjs';
-import { scopedCssSetUsedByModules } from './babel/plugin-scoped-css.mjs';
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,11 +76,24 @@ export class NakedJSX
 
     #terserCache        = new Map();
     #babelInputCache    = new Map();
+    #importCache        = new Map();
     #babelOutputCache   = new Map();
-    #importLoadCache    = new Map();
     #nodeResolveCache   = new Map();
     #commonjsCache      = new Map();
     #jsonCache          = new Map();
+
+    //
+    // This cache is used internally by our import plugin.
+    //
+    // We don't have generalised caching of rollup 'load' on the map cache plugin
+    // as there's no clear path to implementing one when we can't know what
+    // cache invalidation strategy to use for the wrapped load.
+    //
+    // In the case of our own custom imports, we know how to invalidate
+    // so it is implemented internally.
+    //
+
+    #importLoadCache    = new Map();
 
     constructor(
         rootDir,
@@ -281,7 +293,7 @@ export class NakedJSX
         await this.processConfig();
 
         this.#developmentServer     = new DevServer({ serverRoot: this.#dstDir });
-        this.#developmentClientJs   = fs.readFileSync(`${nakedJsxSourceDir}/dev-client-injection.js`).toString();
+        this.#developmentClientJs   = fs.readFileSync(path.join(nakedJsxSourceDir, 'dev-client-injection.js')).toString();
 
         this.#startWatchingFiles();
 
@@ -291,22 +303,21 @@ export class NakedJSX
 
         if (process.stdin.isTTY)
         {
-            process.on('SIGINT', this.exit);
-
             process.stdin.setRawMode(true);
             process.stdin.setEncoding('utf8');
             process.stdin.on('readable',
                 () =>
                 {
-                    var char = process.stdin.read(1);
-                    if (!char)
-                        return;
+                    let char;
                     
-                    switch (char.toLowerCase())
+                    while(char = process.stdin.read(1))
                     {
-                        case 'x':
-                            this.exit();
-                            break;
+                        switch (char.toLowerCase())
+                        {
+                            case 'x':
+                                this.exit();
+                                break;
+                        }
                     }
                 });
         }
@@ -596,6 +607,9 @@ export class NakedJSX
         //
 
         page.thisBuild = {};
+
+        page.thisBuild.scopedCssSet = new ScopedCssSet();
+        page.thisBuild.scopedCssSet.reserveCommonCssClasses(this.#commonCss);
         
         //
         // Default page config - should this be in a dedicated file?
@@ -685,50 +699,7 @@ export class NakedJSX
                     ]
             };
 
-        if (forClientJs)
-        {
-            config.plugins.push(
-                [
-                    //
-                    // This plugin extracts scoped css="..." from client JSX (only).
-                    //
-                    // We don't use it for server HTML JSX as this plugin runs at JSX transpile
-                    // time, before the JSX prop values are known. If we used this plugin for
-                    // HTML JSX transpiling, we wouldn't be able to have props alter the content
-                    // of scoped CSS. This is HTML CSS is not final until HTML generation time.
-                    //
-
-                    nakedJsxSourceDir + "/babel/plugin-scoped-css.mjs",
-                    {
-                        commonCss: this.#commonCss
-                    }
-                ]);
-        }
-
         return babel(config);
-    }
-
-    #getBabelOutputClientPlugin()
-    {
-        return  getBabelOutputPlugin(
-                    {
-                        sourceMaps: this.#developmentMode,
-                        plugins:
-                            [
-                                // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
-                                nakedJsxSourceDir + "/babel/plugin-iife.mjs"
-                            ],
-                        targets: this.#config.browserslistTargetQuery,
-                        presets:
-                            [[
-                                // Final babel run to compile down to our browser target
-                                resolveModule("@babel/preset-env"),
-                                {
-                                    bugfixes: true,
-                                    modules: false  // Don't transform import statements - however, rollup should have removed them all.
-                                }
-                            ]],
-                    });
     }
 
     #hashFileContent(content)
@@ -1075,8 +1046,8 @@ export class NakedJSX
                 // Babel for JSX
                 mapCachePlugin(this.#getBabelInputPlugin(forClientJs), this.#babelInputCache),
 
-                // Our rollup plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
-                mapCachePlugin(this.#getImportPlugin(forClientJs), this.#babelInputCache),
+                // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
+                mapCachePlugin(this.#getImportPlugin(forClientJs), this.#importCache),
 
                 // Allow page code to make use of esm imports
                 mapCachePlugin(nodeResolve(), this.#nodeResolveCache),
@@ -1093,26 +1064,18 @@ export class NakedJSX
 
     #createRollupOutputPlugins(forClientJs)
     {
-        //
-        // We currently don't use any rollup output plugins for the HTML JS.
-        // It just needs to run once in the same node process, to produce HTML.
-        //
+        const plugins = [];
 
-        if (!forClientJs)
-            return [];
-        
-        const plugins =
-            [
-                mapCachePlugin(this.#getBabelOutputClientPlugin(), this.#babelOutputCache)
-            ];
-        
-        //
-        // Terser is used to compress the client JS.
-        // It pretty much kills step through debugging, so only enable it for production builds.
-        //
+        if (forClientJs)
+        {
+            //
+            // Terser is used to compress the client JS.
+            // It pretty much kills step through debugging, so only enable it for production builds.
+            //
 
-        if (!this.#developmentMode)
-            plugins.push(mapCachePlugin(this.#getTerserPlugin(), this.#terserCache));
+            if (!this.#developmentMode)
+                plugins.push(mapCachePlugin(this.#getTerserPlugin(), this.#terserCache));
+        }
         
         return plugins;
     }
@@ -1164,13 +1127,48 @@ export class NakedJSX
                 input: page.clientJsFileIn,
                 plugins: this.#rollupPlugins.input.client
             };
+
+        //
+        // Most of our plugins are reused for all files, however our babel based css-extraction
+        // needs to be able to receive a per-rollup-output-file object in which to place the
+        // extracted CSS classes.
+        //
+
+        const babelOutputPlugin =
+            getBabelOutputPlugin(
+                {
+                    sourceMaps: this.#developmentMode,
+                    plugins:
+                        [
+                            // Our Scoped CSS extraction runs over the final tree shaken output
+                            [
+                                path.join(nakedJsxSourceDir, 'babel', 'plugin-scoped-css.mjs'),
+                                {
+                                    scopedCssSet: page.thisBuild.scopedCssSet
+                                }
+                            ],
+
+                            // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
+                            path.join(nakedJsxSourceDir, 'babel', 'plugin-iife.mjs')
+                        ],
+                    targets:    this.#config.browserslistTargetQuery,
+                    presets:
+                        [[
+                            // Final babel run to compile down to our browser target
+                            resolveModule("@babel/preset-env"),
+                            {
+                                bugfixes: true,
+                                modules: false  // Don't transform import statements - however, rollup should have removed them all.
+                            }
+                        ]],
+                });
         
         const outputOptions =
             {
                 entryFileNames: '[name].[hash:64].js',
                 format: 'es',
                 sourcemap: this.#developmentMode,
-                plugins: this.#rollupPlugins.output.client
+                plugins: [ ...this.#rollupPlugins.output.client, babelOutputPlugin ]
             };    
         
         rollup(inputOptions)
@@ -1354,7 +1352,6 @@ export class NakedJSX
                                         taskJsFile:         page.htmlJsFileOut,
                                         developmentMode:    this.#developmentMode,
                                         commonCss:          this.#commonCss,
-                                        scopedCssSet:       scopedCssSetUsedByModules(page.thisBuild.clientJsModuleIds),
                                         page
                                     },
                                     // Task callback

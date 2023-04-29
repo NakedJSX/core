@@ -22,10 +22,10 @@ export const Page =
         {
             const jsxDocument = JSX.GetDocument();
 
-            const { page, commonCss, scopedCssSet } = currentTask;
+            const { page, commonCss } = currentTask;
 
             // Restore the ScopedCssSet prototype lost when passed to the worker
-            Object.setPrototypeOf(scopedCssSet, ScopedCssSet.prototype);
+            Object.setPrototypeOf(page.thisBuild.scopedCssSet, ScopedCssSet.prototype);
 
             if (page.thisBuild.clientJsFileOut)
             {
@@ -47,7 +47,7 @@ export const Page =
                 // We have our page structure, it's now time to process CSS attributes
                 //
 
-                // JSX.AppendHead(<style><raw-content content={finaliseCssClasses(jsxDocument, commonCss, scopedCssSet)}></raw-content></style>);
+                // JSX.AppendHead(<style><raw-content content={finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
                 JSX.AppendHead(
                     JSX.CreateElement(
                         'style',
@@ -55,7 +55,7 @@ export const Page =
                         JSX.CreateElement(
                             'raw-content',
                             {
-                                content: finaliseCssClasses(jsxDocument, commonCss, scopedCssSet)
+                                content: finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet)
                             })
                         )
                     );
