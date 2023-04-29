@@ -16,7 +16,7 @@ import { nodeResolve } from '@rollup/plugin-node-resolve';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, abort, isExternalImport, absolutePath } from './util.mjs';
+import { log, warn, err, fatal, isExternalImport, absolutePath } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import WorkerPool from './thread/pool.mjs';
 
@@ -101,7 +101,11 @@ export class NakedJSX
             configOverride
         } = {})
     {
-        log(`NakedJSX initialising (Node ${process.version})`);
+        const packageFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
+        const packageInfo = JSON.parse(fs.readFileSync(packageFile));
+
+        log.setPrompt('Initialising ...');
+        log(`NakedJSX ${packageInfo.version} initialising (Node ${process.version})`);
 
         rootDir = absolutePath(rootDir);
 
@@ -263,18 +267,28 @@ export class NakedJSX
                         err(`Cannot register plugin of unknown type ${plugin.type}, id ${plugin.id}`);
                         this.exit(1);
                     }
-                });
+                },
+                { log, warn, err, fatal }
+                );
         }
     }
 
     exit(code = 0)
     {
-        log('Exiting ...');
+        log.setPrompt('Exiting ...');
 
         if (this.#htmlRenderPool)
             this.#htmlRenderPool.close();
 
         // wtf, there doesn't seem to be a close feature in the node http server.
+
+        log.setPrompt(`Thank you for trying this prerelease of NakedJSX!
+
+If you have a moment, feedback would be appreciated:
+
+david.q.hogan@gmail.com
+https://discord.gg/BXQDtub2fS
+`);
 
         process.exit(code);
     }
@@ -524,10 +538,10 @@ export class NakedJSX
     async #buildAll()
     {
         if (this.#initialising)
-            abort('#buildAll called while initialising');
+            fatal('#buildAll called while initialising');
 
         if (this.#building)
-            abort('#buildAll called while building');
+            fatal('#buildAll called while building');
         
         this.#buildStartTime    = new Date();
         this.#building          = true;
@@ -540,7 +554,8 @@ export class NakedJSX
             return;
         }
 
-        log(`Building ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
+        log.setPrompt('Building ...');
+        log(`\nBuilding ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
 
         if (this.#commonCssFile)
             this.#commonCss = loadCss((await fsp.readFile(this.#commonCssFile)).toString());
@@ -700,7 +715,7 @@ export class NakedJSX
             };
 
         return babel(config);
-    }
+    }x
 
     #hashFileContent(content)
     {
@@ -1397,7 +1412,7 @@ export class NakedJSX
             if (this.#pagesWithErrors.has(page))
                 return;
 
-            abort(`onPageBuildComplete called twice for page ${page.uriPath}, when page does not have errors`);
+            fatal(`onPageBuildComplete called twice for page ${page.uriPath}, when page does not have errors`);
         }
 
         if (!this.#pagesWithErrors.has(page))
@@ -1434,8 +1449,11 @@ export class NakedJSX
             log(`Finished build after ${this.#getBuildDurationSeconds()} seconds.`);
 
         if (!this.#developmentMode)
-            process.exit();
+        {
+            this.exit();
+            return;
+        }
         
-        log(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit\nREADY`);
+        log.setPrompt(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
     }
 }
