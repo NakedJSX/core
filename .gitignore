@@ -2,6 +2,4 @@
 .pnp.loader.mjs
 .yarn/
 .yarnrc.yml
-node_modules/
-package-lock.json
 yarn.lock
