@@ -10,6 +10,13 @@ const eraseLine     = process.stdout.isTTY ? '\x1b[0K'  : '';
 const promptClear   = `${cursorUpStart}${eraseLine}${cursorUpStart}`;
 let promptText      = '\n';
 
+//
+// Perform an initial dummy log so that the first prompt clear
+// doesn't clear the terminal line before the first log output.
+//
+
+console.log(promptText);
+
 function setPrompt(newPrompt)
 {
     if (process.stdout.isTTY)
