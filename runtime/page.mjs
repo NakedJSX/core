@@ -48,17 +48,19 @@ export const Page =
                 //
 
                 // JSX.AppendHead(<style><raw-content content={finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
-                JSX.AppendHead(
-                    JSX.CreateElement(
-                        'style',
-                        null,
+                const finalCss = finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet);
+                if (finalCss)
+                    JSX.AppendHead(
                         JSX.CreateElement(
-                            'raw-content',
-                            {
-                                content: finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet)
-                            })
-                        )
-                    );
+                            'style',
+                            null,
+                            JSX.CreateElement(
+                                'raw-content',
+                                {
+                                    content: finalCss
+                                })
+                            )
+                        );
             }
 
             if (page.thisBuild.inlineJs)
