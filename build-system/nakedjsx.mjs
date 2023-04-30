@@ -1437,6 +1437,13 @@ https://discord.gg/BXQDtub2fS
             return;
         }
 
+        //
+        // If nothing was placed in the destination asset dir, remove it
+        //
+
+        if (fs.readdirSync(this.#dstAssetDir).length == 0)
+            fs.rmdirSync(this.#dstAssetDir);
+
         if (this.#pagesWithErrors.size)
             err(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
         else
