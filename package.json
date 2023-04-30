@@ -1,6 +1,6 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "bin": {
