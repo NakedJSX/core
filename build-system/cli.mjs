@@ -6,16 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { NakedJSX } from './nakedjsx.mjs';
+import { configFilename, emptyConfig, NakedJSX } from './nakedjsx.mjs';
 import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
-
-const configFilename = '.nakedjsx.json';
-const emptyConfig =
-    {
-        importMapping:              {},
-        browserslistTargetQuery:    'defaults',
-        plugins:                    []
-    };
 
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
@@ -237,8 +229,8 @@ async function processCliArguments()
 
     while (args.length)
     {
-        let flag = args.shift();
-        let option = options[flag];
+        let flag    = args.shift();
+        let option  = options[flag];
 
         if (!option)
         {

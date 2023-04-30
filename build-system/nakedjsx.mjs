@@ -28,8 +28,8 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
 const resolveModule = createRequire(import.meta.url).resolve;
 
-const configFilename = '.nakedjsx.json';
-const emptyConfig =
+export const configFilename = '.nakedjsx.json';
+export const emptyConfig =
     {
         importMapping:              {},
         browserslistTargetQuery:    'defaults',
@@ -126,7 +126,6 @@ export class NakedJSX
 
         if (configOverride)
         {
-            log(`Using overriden config - ignoring ${configFilename}`);
             Object.assign(this.#config, configOverride);
         }
         else if (fs.existsSync(configFilename))
