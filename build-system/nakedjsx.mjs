@@ -173,7 +173,7 @@ export class NakedJSX
 
         if (!config.outputDir)
         {
-            err("Config is missing required 'outputDir'");
+            err("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
             this.exit(1);
         }
 
