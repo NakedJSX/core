@@ -152,7 +152,7 @@ export class NakedJSX
             if (definition.type === 'definition')
                 redactedConfig.importMapping[alias].value = '****';
 
-        log(`Config:\n${JSON.stringify(redactedConfig, null, 4)}`);
+        log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
 
         //
         // Initialise the HTML rendering worker 'pool'

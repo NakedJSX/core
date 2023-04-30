@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { NakedJSX } from './nakedjsx.mjs';
-import { log, fatal, camelToKebabCase, absolutePath } from './util.mjs';
+import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
 
 const configFilename = '.nakedjsx.json';
 const emptyConfig =
@@ -54,10 +54,11 @@ const options =
                 }
             },
         
-        '--output-dir':
+        '--out':
             {
                 desc: 'The build output will be placed here',
                 args: ['path'],
+                deprecatedAlias: ['--output-dir'],
                 impl(config, { path })
                 {
                     config.outputDir = configPath(path)
@@ -236,11 +237,35 @@ async function processCliArguments()
 
     while (args.length)
     {
-        const flag = args.shift();
-        const option = options[flag];
+        let flag = args.shift();
+        let option = options[flag];
 
         if (!option)
-            fatal(`Unknown flag: ${flag}`, usage);
+        {
+            // Flag not found, is it a deprecated alias?
+
+            let found = false;
+            
+            for (const [replacementFlag, replacementOption] of Object.entries(options))
+            {
+                if (!replacementOption.deprecatedAlias)
+                    continue;
+
+                if (replacementOption.deprecatedAlias.includes(flag))
+                {
+                    warn(`Flag ${flag} is a deprecated alias of ${replacementFlag}. Please update your usage.`);
+
+                    found   = true;
+                    flag    = replacementFlag;
+                    option  = replacementOption;
+
+                    break;
+                }
+            }
+
+            if (!found)
+                fatal(`Unknown flag: ${flag}`, usage);
+        }
         
         const optionArguments = {};
         for (const argCamel of option.args || [])
