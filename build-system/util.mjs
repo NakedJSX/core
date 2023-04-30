@@ -16,7 +16,7 @@ let promptText      = '\n';
 // doesn't clear the terminal line before the first log output.
 //
 
-console.log('');
+console.log('\n');
 
 function setPrompt(newPrompt)
 {

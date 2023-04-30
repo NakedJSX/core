@@ -155,8 +155,7 @@ function usage()
 
     // TOOD: Update usage to include yarn version
     console.log(
-`
-Usage:
+`Usage:
 
     # ${options['--help'].desc}
     npx nakedjsx --help
