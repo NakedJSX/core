@@ -140,12 +140,12 @@ export function removeQueryString(path)
         return path;
 }
 
-export function absolutePath(absoluteOrRelativePath)
+export function absolutePath(absoluteOrRelativePath, relativeFrom)
 {
     if (path.isAbsolute(absoluteOrRelativePath))
         return path.normalize(absoluteOrRelativePath);
     else
-        return path.normalize(path.join(process.cwd(), absoluteOrRelativePath));
+        return path.normalize(path.join(relativeFrom ?? process.cwd(), absoluteOrRelativePath));
 }
 
 export function camelToKebabCase(camel)

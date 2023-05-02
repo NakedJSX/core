@@ -11,6 +11,7 @@ import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
 
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
+let configPathBase;
 
 let args;
 let rootDir;
@@ -18,16 +19,36 @@ let config;
 
 function configPath(filepath)
 {
+    if (!configPathBase)
+    {
+        log(`Setting config path base to default of ${rootDir} when looking for ${filepath}`);
+        configPathBase = rootDir;
+    }
+
     //
-    // Convert an absolute or relateive to cwd path to one
-    // relative to the root dir config file..
+    // Convert an absolute or relative to configPathBase path
+    // to one relative to the root dir config file.
     //
 
-    return path.relative(rootDir, absolutePath(filepath));
+    return path.relative(rootDir, absolutePath(filepath, configPathBase));
 }
 
 const options =
     {
+        '--cli-path-base':
+            {
+                advanced: true,
+                desc: 'Interpret CLI relative paths relative to <cli-path-base>',
+                args: ['cliPathBase'],
+                impl(config, { cliPathBase })
+                {
+                    if (configPathBase)
+                        fatal('--cli-path-base must be before other path CLI options');
+                    
+                    configPathBase = absolutePath(cliPathBase);
+                }
+            },
+
         '--dev':
             {
                 desc: 'Launch a hot-refresh development server',
@@ -142,6 +163,9 @@ function usage()
     for (const flag in options)
     {
         const option = options[flag];
+
+        if (option.advanced)
+            continue;
 
         let argText = '';
         if (option.args)
