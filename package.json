@@ -1,10 +1,10 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "bin": {
-    "nakedjsx": "build-system/cli-invoke.mjs"
+    "nakedjsx-cli": "build-system/cli-invoke.mjs"
   },
   "exports": {
     ".": "./build-system/nakedjsx.mjs",
