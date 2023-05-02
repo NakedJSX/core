@@ -13,6 +13,7 @@ import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
+import inject from '@rollup/plugin-inject';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
@@ -620,7 +621,7 @@ https://discord.gg/BXQDtub2fS
         // page.thisBuild is a dedicated place for per-build data
         //
 
-        page.thisBuild = {};
+        page.thisBuild = { inlineJs: [] };
 
         page.thisBuild.scopedCssSet = new ScopedCssSet();
         page.thisBuild.scopedCssSet.reserveCommonCssClasses(this.#commonCss);
@@ -695,20 +696,20 @@ https://discord.gg/BXQDtub2fS
                     [
                         [
                             //
-                            // Allow babel to transpile JSX syntax to our JSX.Create* javascript.
+                            // Allow babel to transpile JSX syntax to our injected functions.
                             //
                             
                             resolveModule("@babel/plugin-transform-react-jsx"),
                             {
-                                pragma: "JSX.CreateElement",
-                                pragmaFrag: "JSX.CreateFragment"
+                                pragma:     '__nakedjsx_create_element',
+                                pragmaFrag: '__nakedjsx_create_fragment'
                             }
                         ]
                     ]
             };
 
         return babel(config);
-    }x
+    }
 
     #hashFileContent(content)
     {
@@ -812,36 +813,50 @@ https://discord.gg/BXQDtub2fS
 
             async resolveId(id, importer, options)
             {
+                if (options.isEntry)
+                    return null;
+                
                 //
-                // Ensure that @nakedjsx imports point to this instance of NakedJSX.
+                // For the NakedJSX runtime, resolveModule is used to ensure
+                // that @nakedjsx imports point to this instance of NakedJSX.
                 //
                 // This is key for the standalone npx nakedjsx tool to be able
                 // to use its bundled copy of @nakedjsx/core to operate on files
                 // that live outside of a node project that directly imports @nakedjsx.
                 //
 
-                if (id.startsWith('@nakedjsx/'))
+                if (id === '@nakedjsx/core/page')
                 {
-                    const result = { id: resolveModule(id) };
-
                     //
-                    // Client JS can't contain any import statements, so no imports can be external.
-                    //
-                    // For HTML JS, official @nakedjsx JSX components live within .jsx files.
-                    // We can't treat these as external as they need to be transpiled,
-                    // not imported directly at HTML generation time.
+                    // @nakedjsx/core/page needs to be external, as it indirectly
+                    // imports some css related deps that use dynamic require,
+                    // which rollup doesn't handle.
                     //
 
-                    if (forClientJs || result.id.endsWith('.jsx'))
-                        result.external = false;
-                    else
-                        result.external = true;
-                    
-                    return result;
+                    return  {
+                                id: resolveModule(id),
+                                external: true
+                            };
                 }
 
-                if (options.isEntry)
-                    return null;
+                if (id === '@nakedjsx/core/jsx')
+                {
+                    //
+                    // @nakedjsx/core/page needs to be for client JS, and
+                    // external for HTML JS.
+                    //
+                    // This is because page.mjs is external, and needs
+                    // to use the same NakedJSX document as page / plugin code.
+                    //
+                    // In clientJS, where imports aren't supported, it must
+                    // be internal (@nakedjsx/core/page is not used for HTML JS)
+                    //
+
+                    return  {
+                                id: resolveModule(id),
+                                external: forClientJs ? false : true
+                            };
+                }
 
                 // Check definitiions
                 if (builder.#definitions[id])
@@ -998,40 +1013,20 @@ https://discord.gg/BXQDtub2fS
         const developmentMode = this.#developmentMode;
 
         return  {
-                    name: 'whenradar-terser',
+                    name: 'terser',
                     async renderChunk(code, chunk, options, meta)
                     {
                         return  minify(
                                     code,
                                     {
-                                        ecma:       2015,                       // Target browsers support es6
-                                        module:     true,                       // "use strict" implied, unused top level functions and vars can be dropped
+                                        toplevel: true,
                                         compress:
                                             {
-                                                ecma: 2015,
-                                                passes: 2,                      // Shaves 40-50 bytes vs 1 pass on 2-4 KiB input
-
-                                                // drop_console: !developmentMode, // this replaces console.log with void 0, which breaks use of code like const log = console.log.bind(console);
-
-                                                //
-                                                // Unsafe options that we have accepted ...
-                                                //
-
-                                                unsafe_arrows: true,            // Convert anon funcs to arrow funcs when 'this' not referenced. Breaks if function relies on 'prototype'
+                                                passes: 2, // Shaves 40-50 bytes vs 1 pass on 2-4 KiB input
                                             },
                                         mangle:
                                             {
-                                                // module: true,
-
-                                                //
-                                                // Unsafe options that we have accepted ...
-                                                //
-
-                                                // This breaks JSON objects prepared for external use, just as those sent to APIs
-                                                // properties:                     // Mangling property names saves nearly 20% size on index and pricing calculator
-                                                //     {
-                                                //         // debug: "__MANGLE__"  // Enable to see what properties would be mangled in the output source
-                                                //     }
+                                                toplevel: true,
                                             },
                                         sourceMap:  developmentMode
                                     })
@@ -1064,7 +1059,14 @@ https://discord.gg/BXQDtub2fS
                 mapCachePlugin(commonjs(), this.#commonjsCache),
 
                 // Allow json files to be imported as data
-                mapCachePlugin(json(), this.#jsonCache)
+                mapCachePlugin(json(), this.#jsonCache),
+
+                // The babel JSX compiler will output code that refers to @nakedjsx/core/jsx exports
+                inject(
+                    {
+                        '__nakedjsx_create_element':  ['@nakedjsx/core/jsx', '__nakedjsx_create_element'],
+                        '__nakedjsx_create_fragment': ['@nakedjsx/core/jsx', '__nakedjsx_create_fragment']
+                    }),
             ];
         
         return plugins;
@@ -1176,7 +1178,7 @@ https://discord.gg/BXQDtub2fS
                 entryFileNames: '[name].[hash:64].js',
                 format: 'es',
                 sourcemap: this.#developmentMode,
-                plugins: [ ...this.#rollupPlugins.output.client, babelOutputPlugin ]
+                plugins: [ babelOutputPlugin, ...this.#rollupPlugins.output.client ]
             };    
         
         rollup(inputOptions)
@@ -1212,7 +1214,7 @@ https://discord.gg/BXQDtub2fS
                                     promises.push(this.#emitFile(page, output.fileName, output.source));
 
                                 //
-                                // Output client JS if we're not inlining it
+                                // emit or inline client JS if we're not inlining it
                                 //
 
                                 for (let output of chunks)
@@ -1221,10 +1223,7 @@ https://discord.gg/BXQDtub2fS
 
                                     if (page.thisBuild.config.client.js.inline)
                                     {
-                                        if (page.thisBuild.inlineJs)
-                                            page.thisBuild.inlineJs += output.code;
-                                        else
-                                            page.thisBuild.inlineJs = output.code;
+                                        page.thisBuild.inlineJs.push(output.code);
                                     }
                                     else
                                     {
@@ -1277,25 +1276,25 @@ https://discord.gg/BXQDtub2fS
                     (id, parent, isResolved) =>
                     {
                         //
-                        // Returning true from here prevents rollup from rolling up an
-                        // import into the destination file.
+                        // Return false rollup import into the output
+                        // Return true to leave it as import 
                         //
 
                         //
-                        // This first test is intended to allow compilation of 3rd party
+                        // This test is intended to allow compilation of 3rd party
                         // named exports containing actual JSX. For example via something like:
                         //
                         // import { ComponentOne, ComponentTwo } from 'third-party-library/jsx'
                         //
-                        // Probably need to switch this to some sort of registration system.
+                        // TODO: need to switch this to some sort of registration system.
                         //
 
-                        if (id.includes('/jsx/') || id.endsWith('/jsx'))
+                        if (id.includes('/jsx/') || id.endsWith('/jsx') || id.endsWith('.jsx'))
                             return false;
                         
                         if (isExternalImport(id))
                         {
-                            log(`Not rolling up ${id} from ${parent}`);
+                            log(`Will not roll up import from ${id} in ${parent}`);
 
                             //
                             // We don't need to rollup node libraries for HTML JS that
@@ -1314,7 +1313,10 @@ https://discord.gg/BXQDtub2fS
                 file: page.htmlJsFileOut,
                 sourcemap: 'inline',
                 format: 'es',
-                plugins: this.#rollupPlugins.output.server
+                plugins: this.#rollupPlugins.output.server,
+                globals: {
+                    'Page': '@nakedjsx/core/page'
+                }
             };
 
         rollup(inputOptions)
@@ -1342,12 +1344,7 @@ https://discord.gg/BXQDtub2fS
                                 //
 
                                 if (this.#developmentMode)
-                                {
-                                    if (page.thisBuild.inlineJs)
-                                        page.thisBuild.inlineJs += this.#developmentClientJs;
-                                    else
-                                        page.thisBuild.inlineJs = this.#developmentClientJs;
-                                }
+                                    page.thisBuild.inlineJs.push(this.#developmentClientJs);
 
                                 const htmlFilePath = `${page.outputDir}/${page.htmlFile}`;
 

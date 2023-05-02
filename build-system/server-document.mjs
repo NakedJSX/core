@@ -37,11 +37,11 @@ class Element
     #id;
     #attributes;
     #children;
-    jsxDocument;
+    #jsxDocument;
 
     constructor(document, tagName)
     {
-        this.jsxDocument    = document;
+        this.#jsxDocument   = document;
         this.#tagName       = tagName ? tagName.toLowerCase() : undefined;
         this.#children      = [];
         this.#attributes    = {};
@@ -79,7 +79,7 @@ class Element
         if (key === 'id')
         {
             this.#id = value;
-            this.jsxDocument.indexElement(this);
+            this.#jsxDocument.indexElement(this);
         }
         
         this.#attributes[key] = value;

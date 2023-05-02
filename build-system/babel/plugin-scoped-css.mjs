@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 
 import { err } from '../util.mjs';
+import { __nakedjsx_create_element } from '@nakedjsx/core/jsx'
 
 // babel plugin implementation
 export default function(babel, options)
@@ -45,14 +46,11 @@ export default function(babel, options)
                 {
                     const callee = nodePath.node.callee;
 
-                    if (callee.type !== 'MemberExpression')
-                        return;
-
-                    if (callee.object.name !== 'JSX' || callee.property.name !== 'CreateElement')
+                    if (callee.type !== 'Identifier' || callee.name !== __nakedjsx_create_element.name)
                         return;
 
                     //
-                    // It's a call to JSX.CreateElement(tagName, props, ...children).
+                    // It's a call to __nakedjsx_create_element(tagName, props, ...children).
                     // Do the props contain "css": ... ?
                     //
 

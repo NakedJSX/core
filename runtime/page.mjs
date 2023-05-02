@@ -1,9 +1,9 @@
 import { parentPort } from 'node:worker_threads';
 
 import { currentTask, log } from '../build-system/thread/worker.mjs';
-import { JSX } from './jsx.mjs';
 import { ServerDocument } from '../build-system/server-document.mjs';
 import { ScopedCssSet, finaliseCssClasses } from '../build-system/css.mjs';
+import { __nakedjsx_set_document, __nakedjsx_get_document, __nakedjsx_create_element, __nakedjsx_create_fragment, __nakedjsx_append_child } from '@nakedjsx/core/jsx';
 
 //
 // The node specific functionality for worker communication needs
@@ -15,13 +15,11 @@ export const Page =
     {
         Create(lang)
         {
-            JSX.SetDocument(new ServerDocument(lang));
+            __nakedjsx_set_document(new ServerDocument(lang));
         },
 
         Render()
         {
-            const jsxDocument = JSX.GetDocument();
-
             const { page, commonCss } = currentTask;
 
             // Restore the ScopedCssSet prototype lost when passed to the worker
@@ -29,9 +27,9 @@ export const Page =
 
             if (page.thisBuild.clientJsFileOut)
             {
-                //JSX.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
-                JSX.AppendHead(
-                    JSX.CreateElement(
+                // this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
+                this.AppendHead(
+                    __nakedjsx_create_element(
                         'script',
                         {
                             src: page.thisBuild.clientJsFileOut,
@@ -41,51 +39,52 @@ export const Page =
                     );
             }   
 
-            // if (page.thisBuild.inlineCss)
-            {
-                //
-                // We have our page structure, it's now time to process CSS attributes
-                //
+            //
+            // We have our page structure, it's now time to process CSS attributes
+            //
 
-                // JSX.AppendHead(<style><raw-content content={finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
-                const finalCss = finaliseCssClasses(jsxDocument, commonCss, page.thisBuild.scopedCssSet);
-                if (finalCss)
-                    JSX.AppendHead(
-                        JSX.CreateElement(
-                            'style',
-                            null,
-                            JSX.CreateElement(
-                                'raw-content',
-                                {
-                                    content: finalCss
-                                })
-                            )
-                        );
-            }
-
-            if (page.thisBuild.inlineJs)
-            {
-                // JSX.AppendBody(<script><raw-content content={page.thisBuild.inlineJs}></raw-content></script>);
-                JSX.AppendBody(
-                    JSX.CreateElement(
-                        'script',
+            // this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
+            const finalCss = finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet);
+            if (finalCss)
+                this.AppendHead(
+                    __nakedjsx_create_element(
+                        'style',
                         null,
-                        JSX.CreateElement(
+                        __nakedjsx_create_element(
                             'raw-content',
                             {
-                                content: page.thisBuild.inlineJs
+                                content: finalCss
+                            })
+                        )
+                    );
+
+            for (const js of page.thisBuild.inlineJs)
+            {
+                // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
+                this.AppendBody(
+                    __nakedjsx_create_element(
+                        'script',
+                        null,
+                        __nakedjsx_create_element(
+                            'raw-content',
+                            {
+                                content: js
                             })
                         )
                     );
             }
 
-            parentPort.postMessage(JSX.GetDocument().toHtml());
+            parentPort.postMessage(__nakedjsx_get_document().toHtml());
         },
 
-        //
-        // Not strictly necessary to proxy these but makes for a cleaner page api.
-        //
+        AppendHead(child)
+        {
+            __nakedjsx_append_child(__nakedjsx_get_document().head, child);
+        },
 
-        AppendHead: JSX.AppendHead.bind(JSX),
-        AppendBody: JSX.AppendBody.bind(JSX),
+        AppendBody(child)
+        {
+            __nakedjsx_append_child(__nakedjsx_get_document().body, child);
+        }
     };
+    
