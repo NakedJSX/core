@@ -66,7 +66,7 @@ function formatLogMessaage(message, prefix = '')
     if (process.stdout.isTTY)
         return `${promptClear}\r${finalMessage}\n${promptText}`;
     else
-        return `${leadingNewlines}${timeSinceStart}: ${prefix}${followingMessage}`;
+        return `${finalMessage}`;
 }
 
 export function log(message)
