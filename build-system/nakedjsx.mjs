@@ -275,6 +275,11 @@ export class NakedJSX
 
         log.setPrompt(`Thank you for trying this prerelease of NakedJSX!
 
+Roadmap to 1.0.0:
+
+- Generate multiple pages from a single *-html.mjs file
+- Prism plugin for displaying formatted code
+
 If you have a moment, feedback would be appreciated:
 
 david.q.hogan@gmail.com
@@ -762,6 +767,19 @@ https://discord.gg/BXQDtub2fS
         return result;
     }
 
+    async #importAssetJson(asset, resolve)
+    {
+        //
+        // Running the JSON via parse -> stringify is technically
+        // unnecessary but it does validate that the content is JSON.
+        //
+
+        const obj = JSON.parse(await fsp.readFile(asset.file));
+        const result = `export default ${JSON.stringify(obj)};`;
+        
+        return result;
+    }
+
     async #importAsset(asset, resolve)
     {
         // ?<asset type>:<asset options string>
@@ -775,6 +793,9 @@ https://discord.gg/BXQDtub2fS
 
         if (importType === 'raw')
             return await this.#importAssetRaw(asset, resolve);
+        
+        if (importType === 'json')
+            return await this.#importAssetJson(asset, resolve);
 
         //
         // Check plugins first, this allows built-in plugins (raw) to be overridden
