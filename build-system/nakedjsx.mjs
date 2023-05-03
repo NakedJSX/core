@@ -279,6 +279,9 @@ Roadmap to 1.0.0:
 
 - Generate multiple pages from a single *-html.mjs file
 - Prism plugin for displaying formatted code
+- Relative asset imports (e.g. import data from './file.json?json')
+- Asset imports from JS source dirs
+- (is the distinction between source and asset import aliases needed?)
 
 If you have a moment, feedback would be appreciated:
 
