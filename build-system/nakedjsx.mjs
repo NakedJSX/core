@@ -10,7 +10,6 @@ import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
-import json from '@rollup/plugin-json';
 import inject from '@rollup/plugin-inject';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
