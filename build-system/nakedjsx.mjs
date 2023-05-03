@@ -10,9 +10,7 @@ import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
-import commonjs from '@rollup/plugin-commonjs';
 import json from '@rollup/plugin-json';
-import { nodeResolve } from '@rollup/plugin-node-resolve';
 import inject from '@rollup/plugin-inject';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
@@ -76,11 +74,6 @@ export class NakedJSX
 
     #terserCache        = new Map();
     #babelInputCache    = new Map();
-    #importCache        = new Map();
-    #babelOutputCache   = new Map();
-    #nodeResolveCache   = new Map();
-    #commonjsCache      = new Map();
-    #jsonCache          = new Map();
 
     //
     // This cache is used internally by our import plugin.
@@ -828,6 +821,8 @@ https://discord.gg/BXQDtub2fS
                 if (id === '@nakedjsx/core/page')
                 {
                     //
+                    // Only ever used to generate html - not used by client JS.
+                    //
                     // @nakedjsx/core/page needs to be external, as it indirectly
                     // imports some css related deps that use dynamic require,
                     // which rollup doesn't handle.
@@ -899,6 +894,55 @@ https://discord.gg/BXQDtub2fS
                         
                         return result;
                     }
+                }
+
+                // Can node resolve it relative to the importer?
+                try {
+                    const nodeResovledId = createRequire(importer).resolve(id);
+                    if (nodeResovledId)
+                    {
+                        let external = false;
+                        if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
+                            external = true;
+
+                        return  {
+                                    id: nodeResovledId,
+                                    external
+                                };
+                    }
+                }
+                catch(error)
+                {
+                    //
+                    // We need to ignore errors here. When operating bundled with
+                    // npx nakedjsx, and when operating on files that do not belong
+                    // to a package.json that depends on a @nakedjsx plugin being used,
+                    // then resolving relative to the file will not work.
+                    //
+                }
+
+                // Can node resolve it from the deps that this build process knows about?
+                try {
+                    const nodeResovledId = resolveModule(id);
+                    if (nodeResovledId)
+                    {
+                        let external = false;
+                        if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
+                            external = true;
+
+                        return  {
+                                    id: nodeResovledId,
+                                    external: nodeResovledId.endsWith('.jsx') ? false : true
+                                };
+                    }
+                }
+                catch(error)
+                {
+                    //
+                    // Need to ignore warnings here too, for example for json imports.
+                    //
+
+                    // warn(`Ignoring error attempting to resolve ${id} from ${importer}:\n${error}`);
                 }
 
                 // This import isn't one that we handle, defer to other plugins
@@ -1049,17 +1093,8 @@ https://discord.gg/BXQDtub2fS
                 // Babel for JSX
                 mapCachePlugin(this.#getBabelInputPlugin(forClientJs), this.#babelInputCache),
 
-                // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc)
-                mapCachePlugin(this.#getImportPlugin(forClientJs), this.#importCache),
-
-                // Allow page code to make use of esm imports
-                mapCachePlugin(nodeResolve(), this.#nodeResolveCache),
-
-                // Allow page code to make use of commonjs imports
-                mapCachePlugin(commonjs(), this.#commonjsCache),
-
-                // Allow json files to be imported as data
-                mapCachePlugin(json(), this.#jsonCache),
+                // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
+                this.#getImportPlugin(forClientJs),
 
                 // The babel JSX compiler will output code that refers to @nakedjsx/core/jsx exports
                 inject(

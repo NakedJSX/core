@@ -35,6 +35,16 @@ function configPath(filepath)
 
 const options =
     {
+        '--nakedjsx-use-running':
+            {
+                advanced: true,
+                desc: 'Always use the running @nakedksx/core',
+                impl()
+                {                    
+                    // no-op - this is handled by the cli-bin wrapper
+                }
+            },
+
         '--cli-path-base':
             {
                 advanced: true,
@@ -156,7 +166,7 @@ const options =
             },
     };
 
-function usage()
+export function usage()
 {
     let optionsHelp = '';
 
