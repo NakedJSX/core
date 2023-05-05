@@ -29,7 +29,8 @@ const resolveModule = createRequire(import.meta.url).resolve;
 export const configFilename = '.nakedjsx.json';
 export const emptyConfig =
     {
-        importMapping:              {},
+        pathAliases:                {},
+        definitions:                {},
         browserslistTargetQuery:    'defaults',
         plugins:                    []
     };
@@ -51,8 +52,7 @@ export class NakedJSX
 
     #assetImportPlugins = new Map();
 
-    #pathMapJs          = {};
-    #pathMapAsset       = {};
+    #pathAliases        = {};
     #definitions        = {};
 
     #htmlRenderPool;
@@ -138,11 +138,10 @@ export class NakedJSX
             log(`No config file ${configFilename}, using default config`);
 
         // Definitions might be sensitive, so mask them when dumping the effective config
-        const redactedConfig = Object.assign({}, this.#config);
+        const redactedConfig = Object.assign({}, JSON.parse(JSON.stringify(this.#config)));
 
-        for (const [ alias, definition ] of Object.entries(redactedConfig.importMapping))
-            if (definition.type === 'definition')
-                redactedConfig.importMapping[alias].value = '****';
+        for (const key in redactedConfig.definitions)
+            redactedConfig.definitions[key] = '****';
 
         log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
 
@@ -203,39 +202,26 @@ export class NakedJSX
         }
 
         //
-        // Process import mappings
+        // Process path aliases
         //
 
-        for (let [alias, value] of Object.entries(config.importMapping))
+        for (const [alias, path] of Object.entries(config.pathAliases))
         {
-            switch(value.type)
+            const absPath = absolutePath(path);
+            if (!fs.existsSync(absPath))
             {
-                case 'source':
-                    this.#pathMapJs[alias] = { ...value, path: absolutePath(value.path) };
-                    if (!fs.existsSync(this.#pathMapJs[alias].path))
-                    {
-                        err(`Source import path ${this.#pathMapJs[alias].path} for alias ${alias} does not exist`);
-                        this.exit(1);
-                    }
-                    break;
-
-                case 'asset':
-                    this.#pathMapAsset[alias] = { ...value, path: absolutePath(value.path) };
-                    if (!fs.existsSync(this.#pathMapAsset[alias].path))
-                    {
-                        err(`Source import path ${this.#pathMapAsset[alias].path} for alias ${alias} does not exist`);
-                        this.exit(1);
-                    }
-                    break;
-
-                case 'definition':
-                    this.#definitions[alias] = { ...value };
-                    break;
-
-                default:
-                    throw Error(`Unsupported mapping type ${value.type}`);
+                err(`Source import path ${absPath} for alias ${alias} does not exist`);
+                this.exit(1);
             }
+
+            this.#pathAliases[alias] = absPath;
         }
+
+        //
+        // Copy definitiions
+        //
+
+        Object.assign(this.#definitions, config.definitions);
 
         //
         // Register plugins
@@ -248,6 +234,14 @@ export class NakedJSX
             pluginRegistration(
                 (plugin) =>
                 {
+                    const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
+
+                    if (!validIdRegex.test(plugin.id))
+                    {
+                        err(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
+                        this.exit(1);
+                    }
+
                     if (plugin.type === 'asset')
                     {
                         log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
@@ -255,7 +249,7 @@ export class NakedJSX
                     }
                     else
                     {
-                        err(`Cannot register plugin of unknown type ${plugin.type}, id ${plugin.id}`);
+                        err(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
                         this.exit(1);
                     }
                 },
@@ -275,15 +269,15 @@ export class NakedJSX
 
         log.setPrompt(`Thank you for trying this prerelease of NakedJSX!
 
+NOTE: Please be aware that everything is subject to change until version 1.0.0.
+
 Roadmap to 1.0.0:
 
 - Generate multiple pages from a single *-html.mjs file
 - Prism plugin for displaying formatted code
-- Relative asset imports (e.g. import data from './file.json?json')
-- Asset imports from JS source dirs
-- (is the distinction between source and asset import aliases needed?)
+- Support for JSX ref, including ability to HTML JS to make refs available to client JS
 
-If you have a moment, feedback would be appreciated:
+If you find NakedJSX useful or could with some changes, feedback would be appreciated:
 
 david.q.hogan@gmail.com
 https://discord.gg/BXQDtub2fS
@@ -643,8 +637,6 @@ https://discord.gg/BXQDtub2fS
         // Reset the page watching
         //
 
-        this.#addWatchFile(page.clientJsFileIn, page);
-        this.#addWatchFile(page.htmlJsFileIn,   page);
         this.#addWatchFile(page.configJsFile,   page);
         this.#addWatchFile(this.#commonCssFile, page);
         
@@ -785,27 +777,15 @@ https://discord.gg/BXQDtub2fS
 
     async #importAsset(asset, resolve)
     {
-        // ?<asset type>:<asset options string>
-        const match = asset.query?.match(/([^:]+):?(.*)/);
-
-        if (!match)
+        if (asset.type === 'default')
             return await this.#importAssetDefault(asset, resolve);
         
-        const importType = match[1];
-        asset.optionsString = match[2];
-
-        if (importType === 'raw')
-            return await this.#importAssetRaw(asset, resolve);
-        
-        if (importType === 'json')
-            return await this.#importAssetJson(asset, resolve);
-
         //
-        // Check plugins first, this allows built-in plugins (raw) to be overridden
+        // Check plugins first, this allows built-in plugins (raw, json) to be overridden
         //
 
-        if (this.#assetImportPlugins.has(importType))
-            return  await this.#assetImportPlugins.get(importType).importAsset(
+        if (this.#assetImportPlugins.has(asset.type))
+            return  await this.#assetImportPlugins.get(asset.type).importAsset(
                         {
                             // Useful data
                             dstAssetDir: this.#dstAssetDir,
@@ -816,7 +796,65 @@ https://discord.gg/BXQDtub2fS
                         },
                         asset);
 
-        throw new Error(`Unknown import plugin id '${importType}' for import ${asset.id}.`);
+        if (asset.type === 'raw')
+            return await this.#importAssetRaw(asset, resolve);
+        
+        if (asset.type === 'json')
+            return await this.#importAssetJson(asset, resolve);
+
+        throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}.`);
+    }
+
+    #parseAssetImportId(id, importer)
+    {
+        //
+        // The id will start with ':[type]:' where [type] is an optional asset
+        // type, such as default, raw, json, or as registered by a plugin.
+        //
+        // Example asset import code:
+        //
+        // import logo from ':image:$ASSET/logo.png?srcDensity=2'
+        //
+        // - asset type is 'image' (provided by @nakedjsx/plugin-asset-image)
+        // - $ASSET has been configured as a path alias to a directory
+        // - logo.png is a file within that directory
+        // - The ?srcDensity=2 query string is passed to the image plugin
+        //
+
+        let [, type, file, query] = id.match(/^:([a-z0-9\-]*):([^\?]*)\?*(.*)$/);
+
+        if (type === undefined)
+            return null;
+        
+        if (type === '')
+            type = 'default';
+        
+        // Apply path alias if one is used
+        for (const [ alias, path ] of Object.entries(this.#pathAliases))
+            if (file.startsWith(alias + '/'))
+            {
+                file = file.replace(alias, path);
+                break;
+            }
+        
+        //
+        // If the file path is not absolute by this stage,
+        // interpret it relative to the importer (if we know it).
+        //
+
+        if (importer && !path.isAbsolute(file))
+            file = absolutePath(file, path.dirname(importer));
+        
+        //
+        // Return the id in a standard format ideal for deduplication purposes.
+        //
+        
+        if (query)
+            id = `:${type}:${file}?${query}`;
+        else
+            id = `:${type}:${file}`;
+        
+        return { id, type, file, query };
     }
 
     #getImportPlugin(forClientJs)
@@ -876,50 +914,38 @@ https://discord.gg/BXQDtub2fS
                             };
                 }
 
-                // Check definitiions
+                // Asset imports
+                if (id.startsWith(':'))
+                {
+                    const parsedId = builder.#parseAssetImportId(id, importer);
+                    if (!parsedId)
+                        return null;
+
+                    return  {
+                                id: parsedId.id,
+                                meta: { asset: parsedId }
+                            };
+                }
+
+                // Definitiions
                 if (builder.#definitions[id])
                     return  {
                                 id,
-                                meta: { definedAs: builder.#definitions[id].value }
+                                meta: { definedAs: builder.#definitions[id] }
                             };
                 
-                // Check Javascript imports
-                for (let alias in builder.#pathMapJs)
+                // Check Javascript imports from aliased source paths
+                for (const [ alias, path ] of Object.entries(builder.#pathAliases))
                     if (id.startsWith(alias))
-                        return await fsp.realpath(id.replace(alias, builder.#pathMapJs[alias].path));
+                        return id.replace(alias, path);
 
-                // Check asset imports
-                for (let alias in builder.#pathMapAsset)
-                {
-                    if (id.startsWith(alias + '/'))
-                    {
-                        const config = builder.#pathMapAsset[alias];
+                //
+                // Can node itself resolve it relative to the importer?
+                //
+                // This works for things like './some-file.mjs'
+                // and for deps of a package that importer belongs to.
+                //
 
-                        id = id.replace(alias, config.path);
-
-                        const result =
-                            {
-                                id,
-                                meta: { asset: { id } }
-                            };
-                        
-                        const match = id.match(/([^?]*)\?(.*)/);
-
-                        if (match)
-                        {
-                            result.meta.asset.file  = match[1];
-                            result.meta.asset.query = match[2];
-                        }
-                        else
-                        {
-                            result.meta.asset.file = id
-                        }
-                        
-                        return result;
-                    }
-                }
-
-                // Can node resolve it relative to the importer?
                 try {
                     const nodeResovledId = createRequire(importer).resolve(id);
                     if (nodeResovledId)
@@ -944,7 +970,13 @@ https://discord.gg/BXQDtub2fS
                     //
                 }
 
-                // Can node resolve it from the deps that this build process knows about?
+                //
+                // Finally, can node resolve it from the deps that this build process knows about?
+                //
+                // This is what allows 'npx nakedjsx' to find the official plugins when
+                // operating on standalone NakedJSX files (i.e. no package.json)
+                //
+
                 try {
                     const nodeResovledId = resolveModule(id);
                     if (nodeResovledId)
@@ -955,17 +987,17 @@ https://discord.gg/BXQDtub2fS
 
                         return  {
                                     id: nodeResovledId,
-                                    external: nodeResovledId.endsWith('.jsx') ? false : true
+                                    external
                                 };
                     }
                 }
                 catch(error)
                 {
                     //
-                    // Need to ignore warnings here too, for example for json imports.
+                    // TODO: Do we need to ignore errors here?
                     //
 
-                    // warn(`Ignoring error attempting to resolve ${id} from ${importer}:\n${error}`);
+                    warn(`Ignoring error attempting to resolve ${id} from ${importer}:\n${error}`);
                 }
 
                 // This import isn't one that we handle, defer to other plugins
@@ -1148,30 +1180,48 @@ https://discord.gg/BXQDtub2fS
         return plugins;
     }
 
-    #addWatchFile(filename, page)
+    #addWatchFile(id, page)
     {
-        if (!filename) // simplify calling code
+        if (!id) // simplify calling code
+            return;
+        
+        let file;
+
+        //
+        // If it's an asset, we need to know the file that it relates to.
+        //
+
+        if (id.startsWith(':'))
+        {
+            const parsedId = this.#parseAssetImportId(id);
+            if (!parsedId)
+                throw Error(`Attempt #addWatchFile(${id}, ${path.uriPath}): asset ID failed to parse`);
+
+            file = parsedId.file;
+        }
+        else
+        {
+            file = id;
+        }
+
+        // Could be 'rollupPluginBabelHelpers.js', which is virtual
+        if (!fs.existsSync(file))
             return;
 
-        // Remove query string
-        const queryIndex = filename.indexOf('?');
-        if (queryIndex != -1)
-            filename = filename.substring(0, queryIndex);
-
-        // Associate filename with page
-        let pagesThatUseFile = this.#watchFiles.get(filename);
+        // Associate file with page
+        let pagesThatUseFile = this.#watchFiles.get(file);
         if (pagesThatUseFile)
+        {
             pagesThatUseFile.add(page);
+        }
         else
         {
             pagesThatUseFile = new Set();
             pagesThatUseFile.add(page);
-            this.#watchFiles.set(filename, pagesThatUseFile);
+            this.#watchFiles.set(file, pagesThatUseFile);
 
             // First time - start watching the file
-            if (fs.existsSync(filename)) // this can be false for internal things like 'rollupPluginBabelHelpers.js'
-                this.#watcher.add(filename);
-            // log(`  now watching ${filename}`);
+            this.#watcher.add(file);
         }
     }
 
@@ -1335,23 +1385,27 @@ https://discord.gg/BXQDtub2fS
                     {
                         //
                         // Return false rollup import into the output
-                        // Return true to leave it as import 
+                        // Return true to leave it as import.
                         //
-
-                        //
-                        // This test is intended to allow compilation of 3rd party
-                        // named exports containing actual JSX. For example via something like:
-                        //
-                        // import { ComponentOne, ComponentTwo } from 'third-party-library/jsx'
-                        //
-                        // TODO: need to switch this to some sort of registration system.
-                        //
-
-                        if (id.includes('/jsx/') || id.endsWith('/jsx') || id.endsWith('.jsx'))
-                            return false;
                         
                         if (isExternalImport(id))
                         {
+                            //
+                            // We basically want to leave all 3rd party imports external,
+                            // so that rollup doesn't recursively roll everything into every 
+                            // *-html.js file.
+                            //
+                            // However - we need to rollup 3rd party JSX components so that
+                            // babel can compile them.
+                            //
+                            // TODO: need to switch this to some sort of registration system.
+                            //
+
+                            if (id.endsWith('.jsx') || id.endsWith('/jsx') || id.includes('/jsx/'))
+                            {
+                                return false;
+                            }
+
                             log(`Will not roll up import from ${id} in ${parent}`);
 
                             //
@@ -1362,7 +1416,7 @@ https://discord.gg/BXQDtub2fS
                             return true;
                         }
 
-                        return false;
+                        return undefined;
                     }
             };
     

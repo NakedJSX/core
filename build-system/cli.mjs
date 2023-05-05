@@ -117,31 +117,13 @@ const options =
                 }
             },
 
-        '--alias-source':
+        '--path-alias':
             {
-                desc: 'Soucecode import path alias, eg. import something from \'$SRC/something.mjs\'',
-                args: ['alias', 'sourceImportDirectory'],
-                impl(config, { alias, sourceImportDirectory })
+                desc: 'Import path alias, eg. import something from \'$SRC/something.mjs\'',
+                args: ['alias', 'path'],
+                impl(config, { alias, path })
                 {
-                    config.importMapping[alias] =
-                        {
-                            type: 'source',
-                            path: configPath(sourceImportDirectory)
-                        };
-                }
-            },
-
-        '--alias-asset':
-            {
-                desc: 'Asset import path alias, eg. import logo_uri_path from \'$ASSET/logo.png\'',
-                args: ['alias', 'assetImportDirectory'],
-                impl(config, { alias, assetImportDirectory })
-                {
-                    config.importMapping[alias] =
-                        {
-                            type: 'asset',
-                            path: configPath(assetImportDirectory)
-                        };
+                    config.pathAliases[alias] = path;
                 }
             },
 
@@ -151,7 +133,7 @@ const options =
                 args: ['key', 'value'],
                 impl(config, { key, value })
                 {                    
-                    config.importMapping[key] = { type: 'definition', value };
+                    config.definitions[key] = value;
                 }
             },
 
