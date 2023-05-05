@@ -267,7 +267,7 @@ export class NakedJSX
 
         // wtf, there doesn't seem to be a close feature in the node http server.
 
-        log.setPrompt(`Thank you for trying this prerelease of NakedJSX!
+        log.setPrompt(`Thank you for trying this NakedJSX prerelease!
 
 NOTE: Please be aware that everything is subject to change until version 1.0.0.
 
@@ -277,7 +277,7 @@ Roadmap to 1.0.0:
 - Prism plugin for displaying formatted code
 - Support for JSX ref, including ability to HTML JS to make refs available to client JS
 
-If you find NakedJSX useful or could with some changes, feedback would be appreciated:
+Any feedback would be appreciated:
 
 david.q.hogan@gmail.com
 https://discord.gg/BXQDtub2fS
@@ -818,10 +818,10 @@ https://discord.gg/BXQDtub2fS
         // - asset type is 'image' (provided by @nakedjsx/plugin-asset-image)
         // - $ASSET has been configured as a path alias to a directory
         // - logo.png is a file within that directory
-        // - The ?srcDensity=2 query string is passed to the image plugin
+        // - The ?srcDensity=2 options string is passed to the image plugin
         //
 
-        let [, type, file, query] = id.match(/^:([a-z0-9\-]*):([^\?]*)\?*(.*)$/);
+        let [, type, file, optionsString] = id.match(/^:([a-z0-9\-]*):([^\?]*)\?*(.*)$/);
 
         if (type === undefined)
             return null;
@@ -849,12 +849,12 @@ https://discord.gg/BXQDtub2fS
         // Return the id in a standard format ideal for deduplication purposes.
         //
         
-        if (query)
-            id = `:${type}:${file}?${query}`;
+        if (optionsString)
+            id = `:${type}:${file}?${optionsString}`;
         else
             id = `:${type}:${file}`;
         
-        return { id, type, file, query };
+        return { id, type, file, optionsString };
     }
 
     #getImportPlugin(forClientJs)
