@@ -8,22 +8,21 @@ const boldOff       = process.stdout.isTTY ? '\x1b[22m' : '';
 const cursorUpStart = process.stdout.isTTY ? '\x1b[1F'  : '';
 const eraseLine     = process.stdout.isTTY ? '\x1b[0K'  : '';
 
-const promptClear   = `${cursorUpStart}${eraseLine}${cursorUpStart}`;
-let promptText      = '\n';
-
-//
-// Perform an initial dummy log so that the first prompt clear
-// doesn't clear the terminal line before the first log output.
-//
-
-console.log('\n');
+let promptClear     = `${cursorUpStart}${eraseLine}${cursorUpStart}`;
+let promptText;
 
 function setPrompt(newPrompt)
 {
     if (process.stdout.isTTY)
     {
+        const firstPrompt = !promptText;
+        
         promptText = `\n${boldOn}${newPrompt}${boldOff}`;
-        console.log(`${promptClear}${promptText}`)
+
+        if (firstPrompt)
+            console.log(`${promptText}`);
+        else
+            console.log(`${promptClear}${promptText}`)
     }
     else
         console.log(`\n${newPrompt}`);
@@ -63,7 +62,7 @@ function formatLogMessaage(message, prefix = '')
         finalMessage = `${prefix}${message}`;
     }
 
-    if (process.stdout.isTTY)
+    if (process.stdout.isTTY && promptText)
         return `${promptClear}\r${finalMessage}\n${promptText}`;
     else
         return `${finalMessage}`;
