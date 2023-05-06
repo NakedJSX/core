@@ -1,6 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 
-import { currentTask, log } from '../build-system/thread/worker.mjs';
+import { currentJob, log } from '../build-system/thread/html-render-worker.mjs';
 import { ServerDocument } from '../build-system/server-document.mjs';
 import { ScopedCssSet, finaliseCssClasses } from '../build-system/css.mjs';
 import { __nakedjsx_set_document, __nakedjsx_get_document, __nakedjsx_create_element, __nakedjsx_create_fragment, __nakedjsx_append_child } from '@nakedjsx/core/jsx';
@@ -13,14 +13,22 @@ import { __nakedjsx_set_document, __nakedjsx_get_document, __nakedjsx_create_ele
 
 export const Page =
     {
+        /**
+         * Begin construction of a HTML document.
+         * @param {string} lang - Will be placed in the 'lang' attribute of the html tag.
+         */
         Create(lang)
         {
             __nakedjsx_set_document(new ServerDocument(lang));
         },
 
-        Render()
+        /**
+         * Render the HTML page and pass it back to the build process.
+         * @param {string} [htmlFilePath] - Override default output file.
+         */
+        Render(htmlFilePath)
         {
-            const { page, commonCss } = currentTask;
+            const { page, commonCss } = currentJob;
 
             // Restore the ScopedCssSet prototype lost when passed to the worker
             Object.setPrototypeOf(page.thisBuild.scopedCssSet, ScopedCssSet.prototype);
@@ -74,14 +82,31 @@ export const Page =
                     );
             }
 
-            parentPort.postMessage(__nakedjsx_get_document().toHtml());
+            parentPort.postMessage(
+                {
+                    rendered:
+                        {
+                            htmlFilePath,
+                            htmlContent: __nakedjsx_get_document().toHtml()
+                        }
+                });
+
+            __nakedjsx_set_document(null);
         },
 
+        /**
+         * Append JSX to the head tag.
+         * @param {*} child - JSX to be appended to the head tag.
+         */
         AppendHead(child)
         {
             __nakedjsx_append_child(__nakedjsx_get_document().head, child);
         },
 
+        /**
+         * Append JSX to the body tag.
+         * @param {*} child - JSX to be appended to the body tag.
+         */
         AppendBody(child)
         {
             __nakedjsx_append_child(__nakedjsx_get_document().body, child);
