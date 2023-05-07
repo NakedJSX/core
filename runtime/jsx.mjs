@@ -13,6 +13,9 @@ export function __nakedjsx_get_document(document)
 export function __nakedjsx_create_element(tag, props, ...children)
 {
     props = props || {};
+
+    if (!jsxDocument)
+        throw Error(`Cannot create a JSX element outside of a Page.Create() / Page.Render() pair.`);
             
     if (typeof tag === "function")
     {
@@ -51,6 +54,9 @@ export function __nakedjsx_create_fragment(props, ...children)
 
 export function __nakedjsx_append_child(parent, child)
 {
+    if (!jsxDocument)
+        throw Error(`Cannot append a JSX child outside of a Page.Create() / Page.Render() pair.`);
+
     if (!child)
         return;
     
