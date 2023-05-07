@@ -776,6 +776,84 @@ https://discord.gg/BXQDtub2fS
         return result;
     }
 
+    async #importAssetDynamic(asset, resolve)
+    {
+        //
+        // The asset js file is expected to export a function:
+        //
+        //     export default function({ addJsx }) { ... }
+        //
+        // where addJsx is a callback:
+        //
+        //     addJsx(meta, jsx)
+        //
+        // The JS exported function is expected to call addJsx(...)
+        // for each dynamically fetched JSX snippet.
+        //
+        // meta is an arbitrary object to pass through to HTML rendering code
+        // jsx is a string containing uncompiled JSX
+        //
+        // The result will be an array of [meta, FunctionGeneratedFromJsx]
+        // such that HTML rendering code can use FunctionGeneratedFromJsx 
+        // as a JSX tag.
+        //
+        // e.g.
+        //
+        // all.mjs:
+        //
+        //     import fsp from 'node:fs/promises'
+        //    
+        //     export default async ({ addJsx }) =>
+        //     {
+        //         for (const file of await fsp.readdir('.'))
+        //         {
+        //             if (!file.endsWith('.jsx'))
+        //                 continue;
+        //    
+        //             addJsx({ file }, await fsp.readFile(file, { encoding: 'utf-8' }));
+        //         }
+        //     }
+        //
+        // index-html.mjs:
+        //
+        //     import posts from ':dynamic:posts/all.mjs'
+        //
+        //     global.SomeTag = ...
+        //
+        //     //
+        //     // <SomeTag /> will be available for use inside <Post />,
+        //     // the content of which came from an abitrary data source
+        //     // with no need for import SomeTag from <somewhere> !
+        //     //
+        //    
+        //     for (const [meta, Post] of posts)
+        //     {
+        //         Page.Create('en');
+        //         Page.AppendBody(<Post />);
+        //         Page.Render(meta.file.replace(/\.jsx$/, '.html'));
+        //     }
+        //
+
+        // Change into the dir the file is in for convenience
+        const cwdBackup = process.cwd();
+        process.chdir(path.dirname(asset.file));
+
+        let result = '';
+
+        function addJsx(meta, jsx)
+        {
+            result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
+        }
+
+        const fetchDynamicJsx = (await import(asset.file)).default;
+        await fetchDynamicJsx({ addJsx });
+
+        // Restore the previous cwd
+        process.chdir(cwdBackup);
+
+        return `export default [${result}]`;
+    }
+
     async #importAsset(asset, resolve)
     {
         if (asset.type === 'default')
@@ -802,6 +880,9 @@ https://discord.gg/BXQDtub2fS
         
         if (asset.type === 'json')
             return await this.#importAssetJson(asset, resolve);
+        
+        if (asset.type === 'dynamic')
+            return await this.#importAssetDynamic(asset, resolve);
 
         throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}.`);
     }
@@ -918,13 +999,13 @@ https://discord.gg/BXQDtub2fS
                 // Asset imports
                 if (id.startsWith(':'))
                 {
-                    const parsedId = builder.#parseAssetImportId(id, importer);
-                    if (!parsedId)
+                    const asset = builder.#parseAssetImportId(id, importer);
+                    if (!asset)
                         return null;
 
                     return  {
-                                id: parsedId.id,
-                                meta: { asset: parsedId }
+                                id: asset.id,
+                                meta: { asset }
                             };
                 }
 
