@@ -122,7 +122,7 @@ export default class HtmlRenderPool extends EventEmitter
                 this.log(`Worker posted error: ${error}`);
 
                 if (worker[kTaskInfo])
-                    worker[kTaskInfo].complete(error);
+                    worker[kTaskInfo].onComplete(error);
                 else
                     this.emit('error', error);
 
