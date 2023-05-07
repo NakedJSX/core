@@ -82,6 +82,10 @@ export const Page =
                     );
             }
 
+            //
+            // Render the document to HTML and pass result back to the build thread.
+            //
+
             parentPort.postMessage(
                 {
                     rendered:
