@@ -709,14 +709,14 @@ https://discord.gg/BXQDtub2fS
         return createHash('sha1').update(content).digest('base64url');
     }
 
-    async #hashAndRenameFile(filepath)
+    async #hashAndRenameFile(filepath, dstDir)
     {
         const content       = await fsp.readFile(filepath);
         const hash          = this.#hashFileContent(content);
         const parsed        = path.parse(filepath);
         const hashFilename  = parsed.name + '.' + hash + parsed.ext;
 
-        await fsp.rename(filepath, parsed.dir + '/' + hashFilename);
+        await fsp.rename(filepath, path.join(dstDir, hashFilename));
 
         return hashFilename;
     }
