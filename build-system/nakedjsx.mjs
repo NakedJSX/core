@@ -267,19 +267,28 @@ export class NakedJSX
 
         // wtf, there doesn't seem to be a close feature in the node http server.
 
-        log.setPrompt(`Thank you for trying this NakedJSX prerelease!
+        let feebackChannels =
+            'Email:   david.q.hogan@gmail.com\n' +
+            'Discord: https://discord.gg/BXQDtub2fS';
 
-NOTE: Everything is subject to change until version 1.0.0.
+        // // Check time vs expected expiry of Show HN post
+        // if (new Date().getTime() < new Date(Date.UTC(2023, 4, 29, 7, 0, 0)).getTime())
+        //     feebackChannels += `\nShow HN: TODO - post on HN and put URL here`;
+
+        log.setPrompt(
+`Thank you for trying this NakedJSX prerelease!
+
+NOTE: Things subject to change until version 1.0.0.
 
 Roadmap to 1.0.0:
 
 - Support for JSX ref, including ability for HTML JS to make refs available to client JS
 - Ability to configure default options for plugins
+- Incorporate feedback ...
 
 Any feedback would be appreciated:
 
-david.q.hogan@gmail.com
-https://discord.gg/BXQDtub2fS
+${feebackChannels}
 `);
 
         process.exit(code);
