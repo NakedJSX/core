@@ -258,19 +258,12 @@ export class NakedJSX
         }
     }
 
-    exit(code = 0)
+    #logFinalThoughts()
     {
-        log.setPrompt('Exiting ...');
-
-        if (this.#htmlRenderPool)
-            this.#htmlRenderPool.close();
-
-        // wtf, there doesn't seem to be a close feature in the node http server.
-
         let feebackChannels =
             'Email:   david.q.hogan@gmail.com\n' +
             'Discord: https://discord.gg/BXQDtub2fS';
-
+        
         // // Check time vs expected expiry of Show HN post
         // if (new Date().getTime() < new Date(Date.UTC(2023, 4, 29, 7, 0, 0)).getTime())
         //     feebackChannels += `\nShow HN: TODO - post on HN and put URL here`;
@@ -289,7 +282,21 @@ Roadmap to 1.0.0:
 Any feedback would be appreciated:
 
 ${feebackChannels}
-`);
+`
+            );
+    }
+
+    exit(code = 0)
+    {
+        if (this.#htmlRenderPool)
+            this.#htmlRenderPool.close();
+
+        // wtf, there doesn't seem to be a close feature in the node http server.
+
+        if (code == 0)
+            this.#logFinalThoughts();    
+        else
+            log.setPrompt('Exit due to error.')
 
         process.exit(code);
     }
