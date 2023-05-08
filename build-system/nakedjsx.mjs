@@ -866,14 +866,14 @@ ${feebackChannels}
     async #importAsset(asset, resolve)
     {
         if (asset.type === 'default')
-            return await this.#importAssetDefault(asset, resolve);
+            return this.#importAssetDefault(asset, resolve);
         
         //
         // Check plugins first, this allows built-in plugins (raw, json) to be overridden
         //
 
         if (this.#assetImportPlugins.has(asset.type))
-            return  await this.#assetImportPlugins.get(asset.type).importAsset(
+            return this.#assetImportPlugins.get(asset.type).importAsset(
                         {
                             // Useful data
                             dstAssetDir: this.#dstAssetDir,
@@ -885,13 +885,13 @@ ${feebackChannels}
                         asset);
 
         if (asset.type === 'raw')
-            return await this.#importAssetRaw(asset, resolve);
+            return this.#importAssetRaw(asset, resolve);
         
         if (asset.type === 'json')
-            return await this.#importAssetJson(asset, resolve);
+            return this.#importAssetJson(asset, resolve);
         
         if (asset.type === 'dynamic')
-            return await this.#importAssetDynamic(asset, resolve);
+            return this.#importAssetDynamic(asset, resolve);
 
         throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}.`);
     }
@@ -1633,7 +1633,7 @@ ${feebackChannels}
         }
 
         if (!this.#pagesWithErrors.has(page))
-            log(`Built ${page.uriPath}`);
+            log(`Page ${page.uriPath} built`);
 
         this.#pagesInProgress.delete(page);
 

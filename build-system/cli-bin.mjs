@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import child_process from 'node:child_process';
 
-import { main as bundledNakedJsxMain, usage } from './cli.mjs';
+import { main as runningNakedJsxMain, usage } from './cli.mjs';
 import { log, warn, fatal, absolutePath } from './util.mjs';
 
 function determineRootDir(args)
@@ -31,8 +31,6 @@ function determineRootDir(args)
 
     if (!fs.statSync(rootDir).isDirectory())
         fatal(`Pages directory (${rootDir}) exists but is not a directory`);
-
-    log(`Pages directory is ${rootDir}`);
 
     return rootDir;
 }
@@ -75,16 +73,16 @@ function isDependencyOrDevDependency(packageFilePath, packageName)
     return false;
 }
 
-async function useTargetNakedJSX(rootDir, packageFilePath)
+async function forwardToTargetNakedJSX(rootDir, packageFilePath)
 {
-    log(`Using NakedJSX from ${packageFilePath} to build ${rootDir}`);
+    log(`Forwarding to NakedJSX from ${packageFilePath} to build ${rootDir}`);
 
     const packageFileDir = path.dirname(packageFilePath);
 
     //
-    // Note, using '.' intead of original source dir because we are changing cwd
-    // Also we want to defend against infinite useTargetNakedJSX recursion so we
-    // pass --nakedjsx-use-running.
+    // Note, we use '.' intead of the original source dir because we are changing cwd.
+    // Also we want to defend against infinite useTargetNakedJSX recursion so we pass
+    // --nakedjsx-use-running.
     //
 
     const nakedJsxArguments = ['.', '--nakedjsx-use-running', '--cli-path-base', process.cwd()].concat(process.argv.slice(3));
@@ -115,8 +113,7 @@ async function useTargetNakedJSX(rootDir, packageFilePath)
     }
     else
     {
-        warn('Target package not installed or dep mananger not detected, falling back to bundled NakedJSX (looked for yarn, pnpm, and npm)');
-        return await useBundledNakedJSX(rootDir);
+        fatal('Target package not installed or dep mananger not detected (looked for yarn, pnpm, and npm). Use --nakedjsx-use-running to build using the version of @nakedjsx/core installed with the npx command.');
     }
 
     log(`Launching child process within ${rootDir}: ${command} ${commandArguments.join(' ')}`);
@@ -130,52 +127,52 @@ async function useTargetNakedJSX(rootDir, packageFilePath)
         });
 }
 
-async function useBundledNakedJSX(rootDir)
-{
-    log(`Using bundled NakedJSX to build ${rootDir}`);
-
-    await bundledNakedJsxMain();
-}
-
 export async function main()
 {
+    //
+    // Depending on cwd, 'npx nakedjsx <path>' will either invoke a globally
+    // installed @nakedjsx/core, or the 'nakedjsx' binary exposed by an
+    // installation of @nakedjsx/core that cwd resides in.
+    //
+    // A decision to be made - allow the currently executing instalation of
+    // NakedJSX to handle the build, or invoke the version of NakedJSX
+    // installed in a package that contains the folder to be built.
+    //
+    // Getting this right means you can always use 'npx nakedjsx'
+    // and the build result will be the same, regardless of the cwd.
+    //
+
     // [0] == node, [1] == this script
     const args = process.argv.slice(2);
 
     const rootDir = determineRootDir(args);
 
-    // Have we been told to use the currently running @nakedjsx/core, rather than consider forwarding?
+    // Have we been directly told to use the currently running @nakedjsx/core, rather than consider forwarding?
     if (args.length > 1 && args[1] === '--nakedjsx-use-running')
-        return await useBundledNakedJSX(rootDir);
+        return runningNakedJsxMain();
 
     const targetPackageFilePath = findPackageJson(rootDir);
 
-    log(`Target package.json: ${targetPackageFilePath}`);
-
     // If the target folder isn't part of a package, use the bundled @nakedjsx/core
     if (!targetPackageFilePath)
-        return await useBundledNakedJSX(rootDir);
-
-    log(`${rootDir} is part of a package`);
+        return runningNakedJsxMain();
 
     // If the target package doesn't directly depend on @nakedjsx/core, use the bundled @nakedjsx/core
     if (!isDependencyOrDevDependency(targetPackageFilePath, '@nakedjsx/core'))
-        return await useBundledNakedJSX(rootDir);
+        return runningNakedJsxMain();
     
-    log(`${rootDir} is part of a package than depends on @nakedjsx/core`);
-
     //
-    // The target does directly depend on @nakedjsx.core.
+    // The target does directly depend on @nakedjsx/core.
     //
-    // The target dir might belong to the same package that the running 
-    // @nakedjsx/core is a dependency of, or it might not.
+    // If the currently running nakedjsx is somewhere under the dir that
+    // holds the target package file, then we can keep running.
+    //
+    // Otherwise, we forward this invocation to the @nakedjsx/core
+    // installation within the target package.
     //
 
-    const runningPackageFilePath = findPackageJson(path.join(path.dirname(process.argv[1]), '..'));
-    log(`Running package.json: ${runningPackageFilePath}`);
-
-    if (targetPackageFilePath === runningPackageFilePath)
-        return await useBundledNakedJSX(rootDir);
+    if (process.argv[1].startsWith(path.dirname(targetPackageFilePath)))
+        return runningNakedJsxMain();
 
     //
     // Finally, it appears that the target is in a package
@@ -183,9 +180,7 @@ export async function main()
     // is running from. Defer to the target installation.
     //
 
-    log('Using target @nakedjsx/core');
-
-    return await useTargetNakedJSX(rootDir, targetPackageFilePath);
+    return forwardToTargetNakedJSX(rootDir, targetPackageFilePath);
 }
 
 await main();

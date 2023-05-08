@@ -202,8 +202,6 @@ function determineRootDir()
     if (!fs.statSync(rootDir).isDirectory())
         fatal(`Pages directory (${rootDir}) exists but is not a directory`);
 
-    log(`Pages directory is ${rootDir}`);
-
     return rootDir;
 }
 
@@ -217,12 +215,7 @@ function loadBaseConfig()
     const configFile = path.join(rootDir, configFilename);
 
     if (!fs.existsSync(configFile))
-    {
-        log(`No config found at ${configFile}`);
         return config;
-    }
-
-    log(`Loading config from ${configFile}`);
 
     try
     {
