@@ -982,7 +982,7 @@ ${feebackChannels}
 
                     return  {
                                 id: resolveModule(id),
-                                external: true
+                                external: 'absolute'
                             };
                 }
 
@@ -1001,7 +1001,7 @@ ${feebackChannels}
 
                     return  {
                                 id: resolveModule(id),
-                                external: forClientJs ? false : true
+                                external: forClientJs ? false : 'absolute'
                             };
                 }
 
@@ -1028,38 +1028,25 @@ ${feebackChannels}
                 // Check Javascript imports from aliased source paths
                 for (const [ alias, path ] of Object.entries(builder.#pathAliases))
                     if (id.startsWith(alias))
-                        return id.replace(alias, path);
-
-                //
-                // Can node itself resolve it relative to the importer?
-                //
-                // This works for things like './some-file.mjs'
-                // and for deps of a package that importer belongs to.
-                //
-
-                try {
-                    const nodeResovledId = createRequire(importer).resolve(id);
-                    if (nodeResovledId)
-                    {
-                        let external = false;
-                        if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
-                            external = true;
-
                         return  {
-                                    id: nodeResovledId,
-                                    external
+                                    id: id.replace(alias, path),
+                                    external: false
                                 };
-                    }
-                }
-                catch(error)
-                {
-                    //
-                    // We need to ignore errors here. When operating bundled with
-                    // npx nakedjsx, and when operating on files that do not belong
-                    // to a package.json that depends on a @nakedjsx plugin being used,
-                    // then resolving relative to the file will not work.
-                    //
-                }
+
+                // Absolute path to source file?
+                if (path.isAbsolute(id) && fs.existsSync(id))
+                    return  {
+                                id: id,
+                                external: false
+                            };
+
+                // Relative path to a source file?
+                const resolvedRelativePath = path.join(path.dirname(importer), id);
+                if (fs.existsSync(resolvedRelativePath))
+                    return  {
+                                id: resolvedRelativePath,
+                                external: false
+                            };
 
                 //
                 // Finally, can node resolve it from the deps that this build process knows about?
@@ -1070,25 +1057,20 @@ ${feebackChannels}
 
                 try {
                     const nodeResovledId = resolveModule(id);
-                    if (nodeResovledId)
-                    {
-                        let external = false;
-                        if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
-                            external = true;
+                    let external = false;
+                    if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
+                        external = 'absolute';
 
-                        return  {
-                                    id: nodeResovledId,
-                                    external
-                                };
-                    }
+                    return  {
+                                id: nodeResovledId,
+                                external
+                            };
                 }
                 catch(error)
                 {
                     //
-                    // TODO: Do we need to ignore errors here?
+                    // We couldn't resolve it, let rollup handle it
                     //
-
-                    warn(`Ignoring error attempting to resolve ${id} from ${importer}:\n${error}`);
                 }
 
                 // This import isn't one that we handle, defer to other plugins
@@ -1472,45 +1454,7 @@ ${feebackChannels}
         const inputOptions =
             {
                 input: page.htmlJsFileIn,
-                plugins: this.#rollupPlugins.input.server,
-                external:
-                    (id, parent, isResolved) =>
-                    {
-                        //
-                        // Return false rollup import into the output
-                        // Return true to leave it as import.
-                        //
-                        
-                        if (isExternalImport(id))
-                        {
-                            //
-                            // We basically want to leave all 3rd party imports external,
-                            // so that rollup doesn't recursively roll everything into every 
-                            // *-html.js file.
-                            //
-                            // However - we need to rollup 3rd party JSX components so that
-                            // babel can compile them.
-                            //
-                            // TODO: need to switch this to some sort of registration system.
-                            //
-
-                            if (id.endsWith('.jsx') || id.endsWith('/jsx') || id.includes('/jsx/'))
-                            {
-                                return false;
-                            }
-
-                            log(`Will not roll up import from ${id} in ${parent}`);
-
-                            //
-                            // We don't need to rollup node libraries for HTML JS that
-                            // runs at compile time.
-                            //
-
-                            return true;
-                        }
-
-                        return undefined;
-                    }
+                plugins: this.#rollupPlugins.input.server
             };
     
         const outputOptions =
