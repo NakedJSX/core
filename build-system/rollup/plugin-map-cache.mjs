@@ -5,7 +5,7 @@ export function mapCachePlugin(plugin, cache = new Map())
     async function cacheImpl(partitionKey, key, fallback)
     {
         //
-        // Assumes that nullish values are not legitimate cacheable rsults.
+        // Assumes that nullish values are not legitimate cacheable results.
         //
 
         let partition = cache.get(partitionKey)
