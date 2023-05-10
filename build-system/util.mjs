@@ -92,6 +92,8 @@ export function fatal(message, lastHurrahCallback)
     err(message);
     if (lastHurrahCallback)
         lastHurrahCallback();
+
+    setPrompt('Exit due to error.');
     process.exit(1);
 }
 

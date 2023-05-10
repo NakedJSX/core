@@ -10,30 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import child_process from 'node:child_process';
 
-import { main as runningNakedJsxMain, usage } from './cli.mjs';
+import { main, usage } from './cli.mjs';
 import { log, warn, fatal, absolutePath } from './util.mjs';
-
-function determineRootDir(args)
-{
-    if (args < 1)
-        fatal('<pages-directory> is required.', usage);
-
-    const rootDir = args[0];
-
-    if (rootDir === '--help')
-    {
-        options['--help'].impl();
-        throw Error;
-    }
-
-    if (!fs.existsSync(rootDir))
-        fatal(`Pages directory (${rootDir}) does not exist`);
-
-    if (!fs.statSync(rootDir).isDirectory())
-        fatal(`Pages directory (${rootDir}) exists but is not a directory`);
-
-    return rootDir;
-}
 
 function findPackageJson(searchDir)
 {
@@ -81,11 +59,20 @@ async function forwardToTargetNakedJSX(rootDir, packageFilePath)
 
     //
     // Note, we use '.' intead of the original source dir because we are changing cwd.
-    // Also we want to defend against infinite useTargetNakedJSX recursion so we pass
-    // --nakedjsx-use-running.
+    // The cwd change is necessary to correctly invoke the @nakedjsx/core installed
+    // around rootDir.
+    //
+    // For this reason we also override the --cli-path-base to cwd, which allows paths
+    // passed on CLI to be relative to where the command was executed, not to the 
+    // changed cwd after forwarding the invocation.
+    //
+    // We also want to defend against infinite useTargetNakedJSX recursion bugs so we
+    // pass --do-not-forward, which forces the next @nakedjsx/core to build it.
     //
 
-    const nakedJsxArguments = ['.', '--nakedjsx-use-running', '--cli-path-base', process.cwd()].concat(process.argv.slice(3));
+    const nakedJsxArguments =
+        ['.', '--do-not-forward', '--cli-path-base', process.cwd()]
+            .concat(process.argv.slice(3));
 
     let command;
     let commandArguments;
@@ -113,7 +100,7 @@ async function forwardToTargetNakedJSX(rootDir, packageFilePath)
     }
     else
     {
-        fatal('Target package not installed or dep mananger not detected (looked for yarn, pnpm, and npm). Use --nakedjsx-use-running to build using the version of @nakedjsx/core installed with the npx command.');
+        fatal('Target package not installed or dep mananger not detected (looked for yarn, pnpm, and npm).');
     }
 
     log(`Launching child process within ${rootDir}: ${command} ${commandArguments.join(' ')}`);
@@ -127,7 +114,7 @@ async function forwardToTargetNakedJSX(rootDir, packageFilePath)
         });
 }
 
-export async function main()
+export async function earlyMain()
 {
     //
     // Depending on cwd, 'npx nakedjsx <path>' will either invoke a globally
@@ -142,24 +129,34 @@ export async function main()
     // and the build result will be the same, regardless of the cwd.
     //
 
-    // [0] == node, [1] == this script
-    const args = process.argv.slice(2);
+    if (process.argv.length < 3)
+        fatal('<pages-directory> is required.', usage);
 
-    const rootDir = determineRootDir(args);
+    // [0] == node, [1] == this script, [2] == root dir
+    const [rootDir, ...args] = process.argv.slice(2);
+
+    if (rootDir === '--help')
+        options['--help'].impl();
+
+    if (!fs.existsSync(rootDir))
+        fatal(`Pages directory (${rootDir}) does not exist`);
+
+    if (!fs.statSync(rootDir).isDirectory())
+        fatal(`Pages directory (${rootDir}) exists but is not a directory`);
 
     // Have we been directly told to use the currently running @nakedjsx/core, rather than consider forwarding?
-    if (args.length > 1 && args[1] === '--nakedjsx-use-running')
-        return runningNakedJsxMain();
+    if (args.length && args[0] === '--do-not-forward')
+        return main();
 
     const targetPackageFilePath = findPackageJson(rootDir);
 
     // If the target folder isn't part of a package, use the bundled @nakedjsx/core
     if (!targetPackageFilePath)
-        return runningNakedJsxMain();
+        return main();
 
     // If the target package doesn't directly depend on @nakedjsx/core, use the bundled @nakedjsx/core
     if (!isDependencyOrDevDependency(targetPackageFilePath, '@nakedjsx/core'))
-        return runningNakedJsxMain();
+        return main();
     
     //
     // The target does directly depend on @nakedjsx/core.
@@ -172,7 +169,7 @@ export async function main()
     //
 
     if (process.argv[1].startsWith(path.dirname(targetPackageFilePath)))
-        return runningNakedJsxMain();
+        return main();
 
     //
     // Finally, it appears that the target is in a package
@@ -183,4 +180,4 @@ export async function main()
     return forwardToTargetNakedJSX(rootDir, targetPackageFilePath);
 }
 
-await main();
+await earlyMain();

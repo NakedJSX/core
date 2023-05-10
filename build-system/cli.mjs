@@ -19,11 +19,17 @@ let config;
 
 function configPath(filepath)
 {
+    //
+    // All paths passed on CLI are interpretted relative to configPathBase.
+    // If the @nakedjsx/code invocation wasn't forwarded, then it likely
+    // won't be set yet and we use an intuitive default of cwd.
+    //
+    // Because invocation forwarding changes cwd, it also passes the original
+    // cwd to use as a config path base via --cli-path-base.
+    //
+
     if (!configPathBase)
-    {
-        log(`Setting config path base to default of ${rootDir} when looking for ${filepath}`);
-        configPathBase = rootDir;
-    }
+        configPathBase = process.cwd();
 
     //
     // Convert an absolute or relative to configPathBase path
@@ -35,10 +41,10 @@ function configPath(filepath)
 
 const options =
     {
-        '--nakedjsx-use-running':
+        '--do-not-forward':
             {
                 advanced: true,
-                desc: 'Always use the running @nakedksx/core',
+                desc: 'Use the running @nakedksx/core, do not consider forwarding to another installation.',
                 impl()
                 {                    
                     // no-op - this is handled by the cli-bin wrapper
@@ -143,7 +149,7 @@ const options =
                 impl()
                 {
                     usage();
-                    process.exit();
+                    process.exit(0);
                 }
             },
     };

@@ -130,8 +130,7 @@ export class NakedJSX
             }
             catch(error)
             {
-                err(`Failed to parse ${configFilePath}: ${error}`);
-                this.exit(1);
+                fatal(`Failed to parse ${configFilePath}: ${error}`);
             }
         }
         else
@@ -164,19 +163,13 @@ export class NakedJSX
         //
 
         if (!config.outputDir)
-        {
-            err("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
-            this.exit(1);
-        }
+            fatal("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
 
         this.#srcDir = process.cwd();
         this.#dstDir = absolutePath(config.outputDir);
     
         if (this.#dstDir.startsWith(this.#srcDir + path.sep))
-        {
-            err(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
-            this.exit(1);
-        }
+            fatal(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
 
         if (!fs.existsSync(this.#dstDir))
         {
@@ -195,10 +188,7 @@ export class NakedJSX
             this.#commonCssFile = absolutePath(config.commonCssFile);
                 
             if (!fs.existsSync(this.#commonCssFile))
-            {
-                err(`Common CSS file ${this.#commonCssFile} doesn't exist`);
-                this.exit(1);
-            }
+                fatal(`Common CSS file ${this.#commonCssFile} doesn't exist`);
         }
 
         //
@@ -209,10 +199,7 @@ export class NakedJSX
         {
             const absPath = absolutePath(path);
             if (!fs.existsSync(absPath))
-            {
-                err(`Source import path ${absPath} for alias ${alias} does not exist`);
-                this.exit(1);
-            }
+                fatal(`Source import path ${absPath} for alias ${alias} does not exist`);
 
             this.#pathAliases[alias] = absPath;
         }
@@ -237,10 +224,7 @@ export class NakedJSX
                     const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
 
                     if (!validIdRegex.test(plugin.id))
-                    {
-                        err(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
-                        this.exit(1);
-                    }
+                        fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
 
                     if (plugin.type === 'asset')
                     {
@@ -248,10 +232,7 @@ export class NakedJSX
                         this.#assetImportPlugins.set(plugin.id, plugin);
                     }
                     else
-                    {
-                        err(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
-                        this.exit(1);
-                    }
+                        fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
                 },
                 { log, warn, err, fatal }
                 );
@@ -277,6 +258,7 @@ Roadmap to 1.0.0:
 
 - Support for JSX ref, including ability for HTML JS to make refs available to client JS
 - Ability to configure default options for plugins
+- Tests
 - Incorporate feedback ...
 
 Any feedback would be appreciated:
@@ -286,19 +268,16 @@ ${feebackChannels}
             );
     }
 
-    exit(code = 0)
+    exit()
     {
         if (this.#htmlRenderPool)
             this.#htmlRenderPool.close();
 
         // wtf, there doesn't seem to be a close feature in the node http server.
 
-        if (code == 0)
-            this.#logFinalThoughts();    
-        else
-            log.setPrompt('Exit due to error.')
+        this.#logFinalThoughts();    
 
-        process.exit(code);
+        process.exit(0);
     }
 
     /**
@@ -429,7 +408,7 @@ ${feebackChannels}
         if (filename === configFilename)
         {
             log('Config updated, please restart.');
-            this.exit(0);
+            this.exit();
         }
 
         //
@@ -567,7 +546,17 @@ ${feebackChannels}
         log(`\nBuilding ${this.#numPageStr(this.#pagesToBuild.size)} ...`);
 
         if (this.#commonCssFile)
-            this.#commonCss = loadCss((await fsp.readFile(this.#commonCssFile)).toString());
+        {
+            try
+            {
+                this.#commonCss = loadCss((await fsp.readFile(this.#commonCssFile)).toString());
+            }
+            catch(error)
+            {
+                err(`Could not load common css: ${error}`);
+                this.#commonCss = '';
+            }
+        }
         else
             this.#commonCss = '';
         
@@ -1617,20 +1606,27 @@ ${feebackChannels}
 
         if (fs.readdirSync(this.#dstAssetDir).length == 0)
             fs.rmdirSync(this.#dstAssetDir);
+        
+        const hasErrors = !!this.#pagesWithErrors.size;
 
-        if (this.#pagesWithErrors.size)
+        if (!this.#developmentMode)
+        {
+            if (hasErrors)
+                fatal(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
+            else
+                log(`Finished build.`);
+            
+            this.exit();
+        }
+
+        if (hasErrors)
             err(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
         else
             log(`Finished build.`);
         
         enableBenchmark(false);
 
-        if (!this.#developmentMode)
-        {
-            this.exit();
-            return;
-        }
-        
-        log.setPrompt(`Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
+        const prefix = hasErrors ? '(Build errors) ' : '';
+        log.setPrompt(`${prefix}Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
     }
 }

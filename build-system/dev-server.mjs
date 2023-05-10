@@ -45,8 +45,7 @@ export class DevServer
 
                 if (--serverPort <= defaultServerPort - 10)
                 {
-                    console.error(`* Port ${serverPort} in use, giving up.`);
-                    process.exit(1);
+                    fatal(`Ports ${defaultServerPort} - ${serverPort + 1} in use, giving up.`);
                 }
                 
                 console.error(`* Port ${serverPort + 1} in use, trying ${serverPort}`);
