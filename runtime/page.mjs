@@ -1,7 +1,7 @@
 import { parentPort } from 'node:worker_threads';
 
 import { currentJob, log } from '../build-system/thread/html-render-worker.mjs';
-import { ServerDocument } from '../build-system/server-document.mjs';
+import { Ref, ServerDocument } from '../build-system/server-document.mjs';
 import { ScopedCssSet, finaliseCssClasses } from '../build-system/css.mjs';
 import { __nakedjsx_set_document, __nakedjsx_get_document, __nakedjsx_create_element, __nakedjsx_create_fragment, __nakedjsx_append_child } from '@nakedjsx/core/jsx';
 
@@ -114,6 +114,14 @@ export const Page =
         AppendBody(child)
         {
             __nakedjsx_append_child(__nakedjsx_get_document().body, child);
+        },
+
+        /**
+         * Create a Ref that can be passed to a JSX element to capture a reference to it.
+         */
+        CreateRef()
+        {
+            return new Ref();
         }
     };
     

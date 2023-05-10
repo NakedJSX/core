@@ -81,6 +81,12 @@ class Element
             this.#id = value;
             this.#jsxDocument.indexElement(this);
         }
+
+        if (key === 'ref')
+        {
+            value.set(this);
+            return;
+        }
         
         this.#attributes[key] = value;
     }
@@ -185,6 +191,21 @@ class Element
         }
 
         return html;
+    }
+}
+
+export class Ref
+{
+    #element;
+
+    set(element)
+    {
+        this.#element = element;
+    }
+
+    appendChild(child)
+    {
+        this.#element.appendChild(child);
     }
 }
 
