@@ -463,20 +463,29 @@ ${feebackChannels}
 
     #matchPageJsFile(filename)
     {
-        const pageEntryMatch    = /^(.*)-(client|html|config)\.m?js$/;
+        const pageEntryMatch    = /^(.*)-(html|client|config)\.(jsx|mjs|js)$/;
         const match             = filename.match(pageEntryMatch);
 
         if (match)
-        {    
-            const htmlFile  = path.basename(match[1] + '.html');
+        {
             const uriPath   = match[1] === 'index' ? '/' : ('/' + match[1]).replace(/\/index$/, '');
+            const type      = match[2];
+            const ext       = match[3];
+
+            if ((type === 'html' || type === 'client') && ext !== 'jsx')
+                throw Error(`Page file ${filename} should have .jsx extension`);
+
+            if (type === 'config' && ext !== 'mjs' && ext !== 'js')
+                throw Error(`Page config ${filename} should have .mjs or .js extension`);
+
+            const htmlFile  = path.basename(match[1] + '.html');
             const outputDir = path.resolve(`${this.#dstDir}/${path.dirname(match[1])}`);
             
             return {
-                type: match[2],
-                outputDir,
                 uriPath,
-                htmlFile
+                type,
+                htmlFile,
+                outputDir
             };
         }
     }
@@ -488,7 +497,7 @@ ${feebackChannels}
         if (match.type === 'html')
         {
             page.htmlJsFileIn       = fullPath;
-            page.htmlJsFileOut    = `${this.#dstDir}/${filename}`;
+            page.htmlJsFileOut    = `${this.#dstDir}/${filename}.mjs`;
         }
         else if (match.type === 'client')
         {
