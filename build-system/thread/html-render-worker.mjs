@@ -9,6 +9,9 @@ export function log(...args)
     parentPort.postMessage({ log: args.join(' ') });
 }
 
+// take note of the keys in the default global scope
+const standardGlobalKeys = new Set(Object.keys(global));
+
 // We need to make each subsequent import of the same filename look unique ...
 let importIndex = 0;
 
@@ -24,6 +27,11 @@ parentPort.on(
 
         // Remove hanging reference
         currentJob = null;
+
+        // Remove anything added to global scope
+        for (let key of Object.keys(global))
+            if (!standardGlobalKeys.has(key))
+                delete global[key];
 
         // Notify of completion
         parentPort.postMessage({ complete: true });
