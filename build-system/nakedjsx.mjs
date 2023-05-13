@@ -17,6 +17,7 @@ import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, fatal, isExternalImport, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import HtmlRenderPool from './thread/html-render-pool.mjs';
+import { assetUriPathPlaceholder } from './server-document.mjs'
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -219,30 +220,33 @@ export class NakedJSX
             const { default: pluginRegistration } = await import(pluginPackageNameOrPath);
 
             pluginRegistration(
-                (plugin) =>
                 {
-                    const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
+                    logging: { log, warn, err, fatal },
 
-                    if (!validIdRegex.test(plugin.id))
-                        fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
-
-                    if (plugin.type === 'asset')
+                    // Plugins call this to register themselves.
+                    register(plugin)
                     {
-                        log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
-                        this.#assetImportPlugins.set(plugin.id, plugin);
+                        const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
+
+                        if (!validIdRegex.test(plugin.id))
+                            fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
+
+                        if (plugin.type === 'asset')
+                        {
+                            log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
+                            this.#assetImportPlugins.set(plugin.id, plugin);
+                        }
+                        else
+                            fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
                     }
-                    else
-                        fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
-                },
-                { log, warn, err, fatal }
-                );
+                });
         }
     }
 
     #logFinalThoughts()
     {
         let feebackChannels =
-            'Email:   david.q.hogan@gmail.com\n' +
+            'Email:   contact@nakedjsx.org\n' +
             'Discord: https://discord.gg/BXQDtub2fS';
         
         // // Check time vs expected expiry of Show HN post
@@ -252,14 +256,19 @@ export class NakedJSX
         log.setPrompt(
 `Thank you for trying this NakedJSX prerelease!
 
-NOTE: Things subject to change until version 1.0.0.
+NOTE: Things subject to change until version 1.0.0,
+      breaking changes linked to Y increments in 0.Y.Z.
+
+      After 1.0.0, breaking changes will be linked to
+      X increments in X.Y.Z.
 
 Roadmap to 1.0.0:
 
-- Support for JSX ref, including ability for HTML JS to make refs available to client JS
+- Client JSX refs
+- Ability for HTML JS to make refs available to client JS
 - Ability to configure default options for plugins
 - Tests
-- Incorporate feedback ...
+- Incorporate feedback
 
 Any feedback would be appreciated:
 
@@ -382,16 +391,14 @@ ${feebackChannels}
         if (!match)
             return;
         
-        log(`Page ${match.uriPath} added ${filename}`);
+        log(`Page ${match.page.uriPath} added ${filename}`);
 
-        const page =
-            this.#pages[match.uriPath] ||
-            (this.#pages[match.uriPath] =
-                {
-                    outputDir: match.outputDir,
-                    uriPath: match.uriPath,
-                    htmlFile: match.htmlFile
-                });
+        let page = this.#pages[match.page.uriPath];
+        if (!page)
+        {
+            page = match.page;
+            this.#pages[match.page.uriPath] = page;
+        }
 
         this.#addPageFileMatch(match, page, filename);
     }
@@ -435,11 +442,11 @@ ${feebackChannels}
         if (!match)
             return;
     
-        log(`Page ${match.htmlFile} deleted ${match.type} file: ${filename}`);
+        log(`Page ${match.page.htmlFile} removed ${match.type} file: ${filename}`);
 
-        const page = this.#pages[match.uriPath];
+        const page = this.#pages[match.page.uriPath];
         if (!page)
-            throw new Error(`Page ${match.uriPath} not tracked for deleted file ${filename}?`);
+            throw new Error(`Page ${match.page.uriPath} not tracked for deleted file ${filename}?`);
 
         const fullPath = `${this.#srcDir}/${filename}`;
 
@@ -456,7 +463,7 @@ ${feebackChannels}
             delete page.configJsFile;
         }
         else
-            throw new Error(`Bad page js file type ${match.type} for page ${match.uriPath}`);
+            throw new Error(`Bad page js file type ${match.page.type} for page ${match.uriPath}`);
         
         this.#enqueuePageBuild(page);
     }
@@ -468,7 +475,7 @@ ${feebackChannels}
 
         if (match)
         {
-            const uriPath   = match[1] === 'index' ? '/' : ('/' + match[1]).replace(/\/index$/, '');
+            const uriPath   = match[1] === 'index' ? '/' : ('/' + match[1]).replace(/\/index$/, '/');
             const type      = match[2];
             const ext       = match[3];
 
@@ -477,16 +484,18 @@ ${feebackChannels}
 
             if (type === 'config' && ext !== 'mjs' && ext !== 'js')
                 throw Error(`Page config ${filename} should have .mjs or .js extension`);
-
-            const htmlFile  = path.basename(match[1] + '.html');
-            const outputDir = path.resolve(`${this.#dstDir}/${path.dirname(match[1])}`);
             
-            return {
-                uriPath,
-                type,
-                htmlFile,
-                outputDir
-            };
+            return  {
+                        type,
+                        page:
+                            {
+                                uriPath,
+                                htmlFile:           path.basename(match[1] + '.html'),
+                                outputDir:          path.resolve(`${this.#dstDir}/${path.dirname(match[1])}`),
+                                outputRoot:         this.#dstDir,
+                                outputAssetRoot:    this.#dstAssetDir
+                            }
+                    };
         }
     }
 
@@ -496,8 +505,8 @@ ${feebackChannels}
 
         if (match.type === 'html')
         {
-            page.htmlJsFileIn       = fullPath;
-            page.htmlJsFileOut    = `${this.#dstDir}/${filename}.mjs`;
+            page.htmlJsFileIn   = fullPath;
+            page.htmlJsFileOut  = `${this.#dstDir}/${filename}.mjs`;
         }
         else if (match.type === 'client')
         {
@@ -740,7 +749,7 @@ ${feebackChannels}
         //
         // A straight copy of the asset with a hash embedded in the filename.
         //
-        // import some_svg from 'image.svg'
+        // import some_svg from '::image.svg'
         // ...
         // some_svg == '/asset/image.<hash>.svg'
         //
@@ -750,14 +759,14 @@ ${feebackChannels}
         const parsedId  = path.parse(asset.id);
         const filename  = `${parsedId.name}.${hash}${parsedId.ext}`;
         const filepath  = `${this.#dstAssetDir}/${filename}`;
-        const uriPath   = `/asset/${filename}`;
+        const uriPath   = `${assetUriPathPlaceholder}/${filename}`;
         const result    = `export default '${uriPath}'`;
 
         // Other async loads don't need to wait for the copy operation
         resolve(result);
 
         await fsp.writeFile(filepath, content);
-        log(`Copied asset ${uriPath}\n`+
+        log(`Copied asset ${filename}\n`+
             `        from ${asset.id}`);
 
         return result;
@@ -880,12 +889,11 @@ ${feebackChannels}
         if (this.#assetImportPlugins.has(asset.type))
             return this.#assetImportPlugins.get(asset.type).importAsset(
                         {
-                            // Useful data
-                            dstAssetDir: this.#dstAssetDir,
-                            
                             // Useful functions
-                            hashAndRenameFile: this.#hashAndRenameFile.bind(this),
-                            resolve: resolve
+                            hashAndOutputAsset: async (filename) => this.#hashAndRenameFile(filename, this.#dstAssetDir),
+                            assetUriPath:       async (filename) => `${assetUriPathPlaceholder}/${filename}`,
+                            mkdtemp:            async ()         => fsp.mkdtemp(path.join(this.#dstAssetDir, 'import-')),
+                            resolve
                         },
                         asset);
 
@@ -1514,21 +1522,17 @@ ${feebackChannels}
                                         page
                                     },
                                     {
-                                        onRendered({ htmlFilePath, htmlContent })
+                                        onRendered({ outputFilename, htmlContent })
                                         {
-                                            // If the Page.Render() didn't override the file name, use the default
-                                            if (!htmlFilePath)
-                                                htmlFilePath = page.htmlFile;
-                                            
-                                            const fullPath = path.normalize(path.join(page.outputDir, htmlFilePath));
-                                            if (!fullPath.startsWith(page.outputDir))
+                                            const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
+                                            if (!fullPath.startsWith(builder.#dstDir ))
                                             {
-                                                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${page.outputDir}`);
+                                                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
                                                 failed = true;
                                             }
                                             else
                                             {
-                                                log(`Page ${page.uriPath} rendered: ${htmlFilePath}`);
+                                                log(`Page ${page.uriPath} rendered: ${outputFilename}`);
                                                 writePromises.push(fsp.writeFile(fullPath, htmlContent));
                                             }
                                         },
@@ -1613,7 +1617,7 @@ ${feebackChannels}
         // If nothing was placed in the destination asset dir, remove it
         //
 
-        if (fs.readdirSync(this.#dstAssetDir).length == 0)
+        if (fs.existsSync(this.#dstAssetDir) && fs.readdirSync(this.#dstAssetDir).length == 0)
             fs.rmdirSync(this.#dstAssetDir);
         
         const hasErrors = !!this.#pagesWithErrors.size;

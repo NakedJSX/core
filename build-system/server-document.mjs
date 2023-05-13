@@ -1,3 +1,6 @@
+
+export const assetUriPathPlaceholder = '__NAKEDJSX_ASSET_DIR__';
+
 // These elements are self closing (i.e. <hr>, not <hr/>)
 const voidElements =
     new Set(
@@ -77,10 +80,7 @@ class Element
             return;
 
         if (key === 'id')
-        {
             this.#id = value;
-            this.#jsxDocument.indexElement(this);
-        }
 
         if (key === 'ref')
         {
@@ -125,8 +125,10 @@ class Element
         return child;
     }
 
-    toHtml()
+    toHtml(renderContext)
     {
+        const { relativeAssetRoot } = renderContext;
+
         var html;
 
         if (this.#tagName)
@@ -144,7 +146,7 @@ class Element
             html = '<' + this.#tagName;
 
             // Attributes
-            for (const [key, value] of Object.entries(this.#attributes))
+            for (let [key, value] of Object.entries(this.#attributes))
             {
                 requireValidAttributeName(key);
                 html += ' ' + key;
@@ -152,7 +154,16 @@ class Element
                 switch (typeof value)
                 {
                     case 'string':
-                        html += '="' + escapeHtml(value) + '"';
+                        switch (key)
+                        {
+                            case "src":
+                            case "href":
+                                if (value.startsWith(assetUriPathPlaceholder + '/'))
+                                    value = value.replace(assetUriPathPlaceholder, relativeAssetRoot);
+
+                            default:
+                                html += '="' + escapeHtml(value) + '"';
+                        }
                         break;
 
                     case 'number':
@@ -175,7 +186,7 @@ class Element
                 const type = typeof child;
 
                 if (type === 'object' && child.constructor.name === 'Element')
-                    html += child.toHtml();
+                    html += child.toHtml(renderContext);
                 else if (type === 'string')
                     html += escapeHtml(child);
                 
@@ -211,8 +222,6 @@ export class Ref
 
 export class ServerDocument
 {
-    #idToElementMap = {};
-
     constructor(lang)
     {
         this.documentElement = new Element(this, "html");
@@ -235,14 +244,9 @@ export class ServerDocument
         return node;
     }
 
-    indexElement(element)
+    toHtml(renderContext)
     {
-        this.#idToElementMap[element.id] = element;
-    }
-
-    toHtml()
-    {
-        return '<!DOCTYPE html>' + this.documentElement.toHtml();
+        return '<!DOCTYPE html>' + this.documentElement.toHtml(renderContext);
     }
 }
 

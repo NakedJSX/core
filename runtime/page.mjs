@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import path from 'node:path';
 
 import { currentJob, log } from '../build-system/thread/html-render-worker.mjs';
 import { Ref, ServerDocument } from '../build-system/server-document.mjs';
@@ -24,9 +25,9 @@ export const Page =
 
         /**
          * Render the HTML page and pass it back to the build process.
-         * @param {string} [htmlFilePath] - Override default output file.
+         * @param {string} [outputFilename] - Override the default name of the generated html file
          */
-        Render(htmlFilePath)
+        Render(outputFilename)
         {
             const { page, commonCss } = currentJob;
 
@@ -35,7 +36,7 @@ export const Page =
 
             if (page.thisBuild.clientJsFileOut)
             {
-                // this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
+                // Equivalent to this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
                 this.AppendHead(
                     __nakedjsx_create_element(
                         'script',
@@ -51,7 +52,7 @@ export const Page =
             // We have our page structure, it's now time to process CSS attributes
             //
 
-            // this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
+            // Equivalent to this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
             const finalCss = finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
@@ -83,15 +84,35 @@ export const Page =
             }
 
             //
+            // Now that we can know the output path, we can calculate a relative path
+            // back to the site root.
+            //
+
+            const fullOutputPath =
+                path.normalize(
+                    path.join(
+                        currentJob.page.outputDir,
+                        outputFilename ?? currentJob.page.htmlFile
+                        )
+                );
+
+            const relativeAssetRoot =
+                path.relative(
+                    path.dirname(fullOutputPath),
+                    currentJob.page.outputAssetRoot);
+
+            //
             // Render the document to HTML and pass result back to the build thread.
             //
+
+            const document = __nakedjsx_get_document();
 
             parentPort.postMessage(
                 {
                     rendered:
                         {
-                            htmlFilePath,
-                            htmlContent: __nakedjsx_get_document().toHtml()
+                            outputFilename: outputFilename ?? currentJob.page.htmlFile,
+                            htmlContent: document.toHtml({ relativeAssetRoot })
                         }
                 });
 
