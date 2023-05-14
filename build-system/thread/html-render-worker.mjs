@@ -9,6 +9,22 @@ export function log(...args)
     parentPort.postMessage({ log: args.join(' ') });
 }
 
+const cache = new Map();
+
+// Return a named map that persists beween pages and incremental builds
+export function getCache(name)
+{
+    let result = cache.get(name);
+
+    if (!result)
+    {
+        result = new Map();
+        cache.set(name, result);
+    }
+    
+    return result;
+}
+
 // take note of the keys in the default global scope
 const standardGlobalKeys = new Set(Object.keys(global));
 
