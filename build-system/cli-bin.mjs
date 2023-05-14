@@ -136,7 +136,10 @@ export async function earlyMain()
     const [rootDir, ...args] = process.argv.slice(2);
 
     if (rootDir === '--help')
-        options['--help'].impl();
+    {
+        usage();
+        process.exit(0);
+    }
 
     if (!fs.existsSync(rootDir))
         fatal(`Pages directory (${rootDir}) does not exist`);
