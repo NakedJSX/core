@@ -91,8 +91,8 @@ export const Page =
             const fullOutputPath =
                 path.normalize(
                     path.join(
-                        currentJob.page.outputDir,
-                        outputFilename ?? currentJob.page.htmlFile
+                        page.outputDir,
+                        outputFilename ?? page.htmlFile
                         )
                 );
 
