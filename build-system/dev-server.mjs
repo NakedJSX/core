@@ -112,9 +112,9 @@ export class DevServer
                                     else
                                         onError(new Error(`Not a file: ${resolvedFile}`));
                                 })
-                            .catch((error) => onError(error));
+                            .catch(onError);
                     })
-                .catch((error) => onError(error));
+                .catch(onError);
         }
 
         resolve(
@@ -122,14 +122,16 @@ export class DevServer
             (resolvedFile) => this.#serveFile(response, resolvedFile),
             (outerError) =>
             {
+                // If the bad path included a file extension, nothing more to try
                 if (path.extname(file))
-                    this.#respondUtf8(response, 500, 'text/plain', outerError.toString());
-                else
-                    resolve(
-                        file + '.html',
-                        (resolvedFile) => this.#serveFile(response, resolvedFile),
-                        (innerError) => this.#respondUtf8(response, 500, 'text/plain', outerError.toString())
-                        );
+                    return this.#respondUtf8(response, 404, 'text/plain', outerError.toString());
+                
+                // Try the same path but plop a .html on the end of it.
+                resolve(
+                    file + '.html',
+                    (resolvedFile) => this.#serveFile(response, resolvedFile),
+                    (innerError) => this.#respondUtf8(response, 404, 'text/plain', outerError.toString())
+                    );
             });
     }
 
