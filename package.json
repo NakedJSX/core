@@ -1,6 +1,6 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.5.2",
+  "version": "0.6.0-test.3",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "bin": {
@@ -22,6 +22,7 @@
     "chokidar": "^3.5.3",
     "css-tree": "^2.3.1",
     "csso": "^5.0.5",
+    "js-beautify": "^1.14.7",
     "postcss": "^8.4.21",
     "postcss-nested": "^6.0.0",
     "rollup": "^3.10.1",

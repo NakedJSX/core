@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { configFilename, emptyConfig, NakedJSX } from './nakedjsx.mjs';
+import { packageInfo, configFilename, emptyConfig, NakedJSX } from './nakedjsx.mjs';
 import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
 
 let developmentMode = false;    // --dev
@@ -143,6 +143,24 @@ const options =
                 }
             },
 
+        '--quiet':
+            {
+                desc: 'Produce less log output',
+                impl()
+                {
+                    config.quiet = true;
+                }
+            },
+
+        '--pretty':
+            {
+                desc: 'Format output HTML, CSS, and JavaScript.',
+                impl()
+                {
+                    config.pretty = true;
+                }
+            },
+
         '--help':
             {
                 desc: 'Print basic help information and exit',
@@ -177,7 +195,9 @@ export function usage()
 
     // TOOD: Update usage to include yarn version
     console.log(
-`Usage:
+`NakedJSX ${packageInfo.version}
+
+Usage:
 
     # ${options['--help'].desc}
     npx nakedjsx --help

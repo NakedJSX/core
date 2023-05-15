@@ -11,6 +11,7 @@ import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import inject from '@rollup/plugin-inject';
+import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
@@ -18,6 +19,8 @@ import { log, warn, err, fatal, isExternalImport, absolutePath, enableBenchmark 
 import { DevServer } from './dev-server.mjs';
 import HtmlRenderPool from './thread/html-render-pool.mjs';
 import { assetUriPathPlaceholder } from './server-document.mjs'
+
+export const packageInfo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json')));
 
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -94,9 +97,6 @@ export class NakedJSX
             configOverride
         } = {})
     {
-        const packageFile = path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
-        const packageInfo = JSON.parse(fs.readFileSync(packageFile));
-
         log.setPrompt('Initialising ...');
         log(`NakedJSX ${packageInfo.version} initialising (Node ${process.version})`);
 
@@ -143,7 +143,7 @@ export class NakedJSX
         for (const key in redactedConfig.definitions)
             redactedConfig.definitions[key] = '****';
 
-        log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
+        this.#config.quiet || log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
 
         //
         // Initialise the HTML rendering worker 'pool'
@@ -157,6 +157,7 @@ export class NakedJSX
 
     async processConfig()
     {
+        const builder = this;
         const config = this.#config;
 
         //
@@ -224,23 +225,25 @@ export class NakedJSX
                     logging: { log, warn, err, fatal },
 
                     // Plugins call this to register themselves.
-                    register(plugin)
-                    {
-                        const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
-
-                        if (!validIdRegex.test(plugin.id))
-                            fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
-
-                        if (plugin.type === 'asset')
-                        {
-                            log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
-                            this.#assetImportPlugins.set(plugin.id, plugin);
-                        }
-                        else
-                            fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
-                    }
+                    register: this.#registerPlugin.bind(this)
                 });
         }
+    }
+
+    #registerPlugin(plugin)
+    {
+        const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
+
+        if (!validIdRegex.test(plugin.id))
+            fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
+
+        if (plugin.type === 'asset')
+        {
+            log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
+            this.#assetImportPlugins.set(plugin.id, plugin);
+        }
+        else
+            fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
     }
 
     #logFinalThoughts()
@@ -284,7 +287,7 @@ ${feebackChannels}
 
         // wtf, there doesn't seem to be a close feature in the node http server.
 
-        this.#logFinalThoughts();    
+        this.#config.quiet || this.#logFinalThoughts();
 
         process.exit(0);
     }
@@ -382,6 +385,17 @@ ${feebackChannels}
     #considerNewPageFile(filename)
     {
         //
+        // When we manually ask chokidar to track file imports outside of #srcDir,
+        // we'll get a 'file added' event which will trigger this callback.
+        //
+        // We don't want to consider building pages starting from files outside
+        // of #srcDir so we check for that here.
+        //
+
+        if (!absolutePath(filename, this.#srcDir).startsWith(this.#srcDir + path.sep))
+            return;
+
+        //
         // A file has been discovered under #srcDir.
         //
         // It might new a new page, or a new browser script for an existing page.
@@ -435,12 +449,16 @@ ${feebackChannels}
     #considerDeletedPageFile(filename)
     {
         //
-        // A file has under #srcDir has changed.
+        // A watched file has been deleted.
         //
 
         const match = this.#matchPageJsFile(filename);
         if (!match)
+        {
+            // it might be a dependency of a page rather than a top level page file
+            this.#considerChangedPageFile(filename);
             return;
+        }
     
         log(`Page ${match.page.htmlFile} removed ${match.type} file: ${filename}`);
 
@@ -478,9 +496,6 @@ ${feebackChannels}
             const uriPath   = match[1] === 'index' ? '/' : ('/' + match[1]).replace(/\/index$/, '/');
             const type      = match[2];
             const ext       = match[3];
-
-            if ((type === 'html' || type === 'client') && ext !== 'jsx')
-                throw Error(`Page file ${filename} should have .jsx extension`);
 
             if (type === 'config' && ext !== 'mjs' && ext !== 'js')
                 throw Error(`Page config ${filename} should have .mjs or .js extension`);
@@ -717,8 +732,8 @@ ${feebackChannels}
                             
                             resolveModule("@babel/plugin-transform-react-jsx"),
                             {
-                                pragma:     '__nakedjsx_create_element',
-                                pragmaFrag: '__nakedjsx_create_fragment'
+                                pragma:     forClientJs ? '__nakedjsx_create_element'  : '__nakedjsx_create_deferred_element',
+                                pragmaFrag: forClientJs ? '__nakedjsx_create_fragment' : '__nakedjsx_create_deferred_fragment'
                             }
                         ]
                     ]
@@ -1229,6 +1244,18 @@ ${feebackChannels}
 
     #createRollupInputPlugins(forClientJs)
     {
+        const injections =
+            {
+                '__nakedjsx_create_element':  ['@nakedjsx/core/jsx', '__nakedjsx_create_element'],
+                '__nakedjsx_create_fragment': ['@nakedjsx/core/jsx', '__nakedjsx_create_fragment']
+            };
+        
+        if (!forClientJs)
+        {
+            injections['__nakedjsx_create_deferred_element']  = ['@nakedjsx/core/jsx', '__nakedjsx_create_deferred_element'];
+            injections['__nakedjsx_create_deferred_fragment'] = ['@nakedjsx/core/jsx', '__nakedjsx_create_deferred_fragment'];
+        }
+
         const plugins =
             [
                 // Babel for JSX
@@ -1238,11 +1265,7 @@ ${feebackChannels}
                 this.#getImportPlugin(forClientJs),
 
                 // The babel JSX compiler will output code that refers to @nakedjsx/core/jsx exports
-                inject(
-                    {
-                        '__nakedjsx_create_element':  ['@nakedjsx/core/jsx', '__nakedjsx_create_element'],
-                        '__nakedjsx_create_fragment': ['@nakedjsx/core/jsx', '__nakedjsx_create_fragment']
-                    }),
+                inject(injections),
             ];
         
         return plugins;
@@ -1532,7 +1555,31 @@ ${feebackChannels}
                                             }
                                             else
                                             {
-                                                log(`Page ${page.uriPath} rendered: ${outputFilename}`);
+                                                if (builder.#config.pretty)
+                                                    htmlContent =
+                                                        jsBeautifier.html_beautify(
+                                                            htmlContent,
+                                                            {
+                                                                "indent_size": "4",
+                                                                "indent_char": " ",
+                                                                "max_preserve_newlines": "-1",
+                                                                "preserve_newlines": false,
+                                                                "keep_array_indentation": false,
+                                                                "break_chained_methods": false,
+                                                                "indent_scripts": "normal",
+                                                                "brace_style": "collapse",
+                                                                "space_before_conditional": true,
+                                                                "unescape_strings": false,
+                                                                "jslint_happy": false,
+                                                                "end_with_newline": false,
+                                                                "wrap_line_length": "0",
+                                                                "indent_inner_html": false,
+                                                                "comma_first": false,
+                                                                "e4x": false,
+                                                                "indent_empty_lines": false
+                                                            });
+
+                                                log(`Page ${page.uriPath} rendering: ${outputFilename}`);
                                                 writePromises.push(fsp.writeFile(fullPath, htmlContent));
                                             }
                                         },

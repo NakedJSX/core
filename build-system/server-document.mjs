@@ -1,3 +1,4 @@
+import { getContext, renderNow, setNewContext, createContextRestorePoint, restoreContext } from "../runtime/jsx.mjs";
 
 export const assetUriPathPlaceholder = '__NAKEDJSX_ASSET_DIR__';
 
@@ -156,10 +157,11 @@ class Element
                     case 'string':
                         switch (key)
                         {
+                            case "srcset":
                             case "src":
                             case "href":
-                                if (value.startsWith(assetUriPathPlaceholder + '/'))
-                                    value = value.replace(assetUriPathPlaceholder, relativeAssetRoot);
+                                html += '="' + escapeHtml(value.replaceAll(assetUriPathPlaceholder, relativeAssetRoot)) + '"';
+                                break;
 
                             default:
                                 html += '="' + escapeHtml(value) + '"';
@@ -196,10 +198,7 @@ class Element
             });
         
         if (this.#tagName)
-        {
-            requireValidTagName(this.#tagName);
             html += '</' + this.#tagName + '>';
-        }
 
         return html;
     }
@@ -207,16 +206,32 @@ class Element
 
 export class Ref
 {
+    #context;
     #element;
 
     set(element)
     {
+        // Capture the current context, which we'll restore when adding children to this Ref.
+        this.#context = getContext();
         this.#element = element;
     }
 
     appendChild(child)
     {
-        this.#element.appendChild(child);
+        let restorePoint = createContextRestorePoint();
+
+        // Restore the context captured when the ref was set
+        setNewContext(this.#context);
+            
+        try
+        {
+            this.#element.appendChild(renderNow(child));
+        }
+        finally
+        {
+            // Remove any added contexts
+            restoreContext(restorePoint);
+        }
     }
 }
 
@@ -236,12 +251,13 @@ export class ServerDocument
         return new Element(this, tagName);
     }
 
-    createTextNode(textOrElement)
+    createTextNode(text)
     {
-        /* For some reason, sometimes JSX tries to create a text node from a previously created element */
-        let node = new Element(this);
-        node.appendChild(textOrElement);
-        return node;
+        //
+        // This function exists only for compatibility with browser DOM API
+        //
+
+        return text;
     }
 
     toHtml(renderContext)
