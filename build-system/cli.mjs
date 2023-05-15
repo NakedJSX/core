@@ -214,7 +214,7 @@ function determineRootDir()
     if (args < 1)
         fatal('<pages-directory> is required.', usage);
 
-    const rootDir = args.shift();
+    let rootDir = args.shift();
 
     if (rootDir === '--help')
     {
@@ -224,6 +224,9 @@ function determineRootDir()
 
     if (!fs.existsSync(rootDir))
         fatal(`Pages directory (${rootDir}) does not exist`);
+    
+    // Get rid of symlinks etc
+    rootDir = fs.realpathSync(rootDir);
 
     if (!fs.statSync(rootDir).isDirectory())
         fatal(`Pages directory (${rootDir}) exists but is not a directory`);

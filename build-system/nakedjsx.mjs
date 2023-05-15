@@ -100,8 +100,6 @@ export class NakedJSX
         log.setPrompt('Initialising ...');
         log(`NakedJSX ${packageInfo.version} initialising (Node ${process.version})`);
 
-        rootDir = absolutePath(rootDir);
-
         //
         // All config paths are relative to the pages root dir
         //
@@ -109,8 +107,12 @@ export class NakedJSX
         if (!fs.existsSync(rootDir))
             throw new Error(`Root dir ${rootDir} does not exist`);
 
+        rootDir = fs.realpathSync(rootDir);
+
         log(`Root and working directory: ${rootDir}`);
         process.chdir(rootDir);
+
+        this.#srcDir = rootDir;
         
         //
         // Obtain config
@@ -167,8 +169,7 @@ export class NakedJSX
         if (!config.outputDir)
             fatal("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
 
-        this.#srcDir = process.cwd();
-        this.#dstDir = absolutePath(config.outputDir);
+        this.#dstDir = absolutePath(config.outputDir, this.#srcDir);
     
         if (this.#dstDir.startsWith(this.#srcDir + path.sep))
             fatal(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
