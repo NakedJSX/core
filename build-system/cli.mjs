@@ -12,10 +12,7 @@ import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
 let configPathBase;
-
-let args;
 let rootDir;
-let config;
 
 function configPath(filepath)
 {
@@ -146,7 +143,7 @@ const options =
         '--quiet':
             {
                 desc: 'Produce less log output',
-                impl()
+                impl(config)
                 {
                     config.quiet = true;
                 }
@@ -155,7 +152,7 @@ const options =
         '--pretty':
             {
                 desc: 'Format output HTML, CSS, and JavaScript.',
-                impl()
+                impl(config)
                 {
                     config.pretty = true;
                 }
@@ -209,7 +206,7 @@ Options:
 ${optionsHelp}`);
 }
 
-function determineRootDir()
+function determineRootDir(args)
 {
     if (args < 1)
         fatal('<pages-directory> is required.', usage);
@@ -258,7 +255,7 @@ function loadBaseConfig()
     return config;
 }
 
-async function processCliArguments()
+async function processCliArguments(args, config)
 {
     //
     // Process command line options
@@ -312,10 +309,11 @@ async function processCliArguments()
 export async function main()
 {
     // [0] == node, [1] == this script or something directly or indirectly importing it
-    args = process.argv.slice(2);
+    const args = process.argv.slice(2);
 
-    rootDir = determineRootDir(args)
-    config  = loadBaseConfig(rootDir);
+    rootDir = determineRootDir(args);
+
+    const config = loadBaseConfig(rootDir);
 
     const configBefore = JSON.stringify(config);
     await processCliArguments(args, config);

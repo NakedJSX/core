@@ -108,9 +108,8 @@ export class NakedJSX
             throw new Error(`Root dir ${rootDir} does not exist`);
 
         rootDir = fs.realpathSync(rootDir);
-
-        log(`Root and working directory: ${rootDir}`);
-        process.chdir(rootDir);
+        
+        log(`Root directory: ${rootDir}`);
 
         this.#srcDir = rootDir;
         
@@ -118,18 +117,20 @@ export class NakedJSX
         // Obtain config
         //
 
+        const configFilePath = path.join(this.#srcDir, configFilename)
+
         this.#config = Object.assign({}, emptyConfig);
 
         if (configOverride)
         {
             Object.assign(this.#config, configOverride);
         }
-        else if (fs.existsSync(configFilename))
+        else if (fs.existsSync(configFilePath))
         {
-            log(`Loading ${configFilename}`);
+            log(`Loading ${configFilePath}`);
             try
             {
-                Object.assign(this.#config, JSON.parse(fs.readFileSync(configFilename)));
+                Object.assign(this.#config, JSON.parse(fs.readFileSync(configFilePath)));
             }
             catch(error)
             {
@@ -137,7 +138,7 @@ export class NakedJSX
             }
         }
         else
-            log(`No config file ${configFilename}, using default config`);
+            log(`No config file ${configFilePath}, using default config`);
 
         // Definitions might be sensitive, so mask them when dumping the effective config
         const redactedConfig = Object.assign({}, JSON.parse(JSON.stringify(this.#config)));
@@ -169,7 +170,7 @@ export class NakedJSX
         if (!config.outputDir)
             fatal("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
 
-        this.#dstDir = absolutePath(config.outputDir, this.#srcDir);
+        this.#dstDir = path.join(this.#srcDir, config.outputDir);
     
         if (this.#dstDir.startsWith(this.#srcDir + path.sep))
             fatal(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
@@ -188,7 +189,7 @@ export class NakedJSX
 
         if (config.commonCssFile)
         {
-            this.#commonCssFile = absolutePath(config.commonCssFile);
+            this.#commonCssFile = path.join(this.#srcDir, config.commonCssFile);
                 
             if (!fs.existsSync(this.#commonCssFile))
                 fatal(`Common CSS file ${this.#commonCssFile} doesn't exist`);
@@ -198,9 +199,9 @@ export class NakedJSX
         // Process path aliases
         //
 
-        for (const [alias, path] of Object.entries(config.pathAliases))
+        for (const [alias, destination] of Object.entries(config.pathAliases))
         {
-            const absPath = absolutePath(path);
+            const absPath = path.join(this.#srcDir, destination);
             if (!fs.existsSync(absPath))
                 fatal(`Source import path ${absPath} for alias ${alias} does not exist`);
 
@@ -393,7 +394,7 @@ ${feebackChannels}
         // of #srcDir so we check for that here.
         //
 
-        if (!absolutePath(filename, this.#srcDir).startsWith(this.#srcDir + path.sep))
+        if (!path.join(this.#srcDir, filename).startsWith(this.#srcDir + path.sep))
             return;
 
         //
@@ -876,20 +877,25 @@ ${feebackChannels}
         const cwdBackup = process.cwd();
         process.chdir(path.dirname(asset.file));
 
-        let result = '';
-
-        function addJsx(meta, jsx)
+        try
         {
-            result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
+            let result = '';
+
+            function addJsx(meta, jsx)
+            {
+                result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
+            }
+
+            const fetchDynamicJsx = (await import(asset.file)).default;
+            await fetchDynamicJsx({ addJsx });
+
+            return `export default [${result}]`;
         }
-
-        const fetchDynamicJsx = (await import(asset.file)).default;
-        await fetchDynamicJsx({ addJsx });
-
-        // Restore the previous cwd
-        process.chdir(cwdBackup);
-
-        return `export default [${result}]`;
+        finally
+        {
+            // Restore the previous cwd
+            process.chdir(cwdBackup);
+        }
     }
 
     async #importAsset(asset, resolve)
