@@ -1,6 +1,6 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.6.0-test.3",
+  "version": "0.6.0",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "bin": {
@@ -40,5 +40,13 @@
     "frontend",
     "dev-server",
     "build-tool"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NakedJSX/core.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NakedJSX/core/issues"
+  },
+  "homepage": "https://nakedjsx.org"
 }
