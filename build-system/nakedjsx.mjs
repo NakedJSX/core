@@ -177,7 +177,7 @@ export class NakedJSX
         if (!fs.existsSync(this.#dstDir))
         {
             log(`Creating output dir: ${this.#dstDir}`);
-            fs.mkdirSync(this.#dstDir); 
+            fs.mkdirSync(this.#dstDir, { recursive: true });
         }
         
         this.#dstAssetDir = path.join(this.#dstDir, 'asset');
@@ -423,7 +423,7 @@ ${feebackChannels}
         return (num == 1) ? '1 page' : `${num} pages`;
     }
 
-    async #considerChangedPageFile(filename)
+    #considerChangedPageFile(filename)
     {
         log(`Changed file: ${filename}`);
 
@@ -437,7 +437,7 @@ ${feebackChannels}
         // A file has under #srcDir has changed.
         //
 
-        const fullPath      = await fsp.realpath(`${this.#srcDir}/${filename}`);
+        const fullPath      = fs.realpathSync(`${this.#srcDir}/${filename}`);
         const affectedPages = this.#watchFiles.get(fullPath);
         if (!affectedPages)
             return;
@@ -457,7 +457,6 @@ ${feebackChannels}
         if (!match)
         {
             // it might be a dependency of a page rather than a top level page file
-            this.#considerChangedPageFile(filename);
             return;
         }
     
