@@ -99,7 +99,7 @@ export const Page =
             const relativeAssetRoot =
                 path.relative(
                     path.dirname(fullOutputPath),
-                    currentJob.page.outputAssetRoot);
+                    page.outputAssetRoot);
 
             //
             // Render the document to HTML and pass result back to the build thread.
@@ -111,7 +111,7 @@ export const Page =
                 {
                     rendered:
                         {
-                            outputFilename: outputFilename ?? currentJob.page.htmlFile,
+                            outputFilename: outputFilename ?? page.htmlFile,
                             htmlContent: document.toHtml({ relativeAssetRoot })
                         }
                 });
@@ -151,6 +151,14 @@ export const Page =
         GetCache(name)
         {
             return getCache(name);
+        },
+
+        /**
+         * Get the full path for a path relative to the output directory for this page
+         */
+        GetOutputPath(relativeOutputPath)
+        {
+            return path.join(currentJob.page.outputDir, relativeOutputPath);
         }
     };
     
