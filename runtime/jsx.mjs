@@ -1,4 +1,25 @@
-let jsxDocument = typeof window === 'object' ? window.document : null;
+let jsxDocument;
+
+if (typeof window === 'object')
+{
+    jsxDocument = document;
+    
+    //
+    // Wrap Element.appendChild so that it can add an array of elements.
+    // This allows a JSX fragment to be passed to appendChild.
+    //
+
+    const originalAppendChild = Element.prototype.appendChild;
+    Element.prototype.appendChild =
+        function(child)
+        {
+            const boundAppendChild = originalAppendChild.bind(this);
+            if (Array.isArray(child))
+                child.forEach(boundAppendChild);
+            else
+                boundAppendChild(child);
+        }
+}
 
 let contexts = [{}];
 
@@ -44,10 +65,9 @@ export function createContextRestorePoint()
 export function restoreContext(restorePoint)
 {
     if (restorePoint < 1)
-        throw Error(`Bad restore point ${restorePoint} passed to restoreContext`);
+        return;
     
-    while (contexts.length > restorePoint)
-        contexts.pop();
+    contexts = contexts.slice(0, restorePoint);
 }
 
 export function __nakedjsx_set_document(document)
@@ -64,6 +84,9 @@ export function renderNow(deferredRender)
 {
     if (typeof deferredRender === 'function')
         return renderNow(deferredRender());
+
+    if (typeof deferredRender === 'string')
+        return jsxDocument.createTextNode(deferredRender);
     
     if (Array.isArray(deferredRender))
         return deferredRender.map(deferredRender => renderNow(deferredRender));
@@ -133,9 +156,6 @@ export function __nakedjsx_create_fragment(props)
 
 export function __nakedjsx_append_child(parent, child)
 {
-    if (!jsxDocument)
-        throw Error(`Cannot append a JSX child outside of a Page.Create() / Page.Render() pair.`);
-
     if (!child)
         return;
 
