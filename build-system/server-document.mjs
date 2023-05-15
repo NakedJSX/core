@@ -157,6 +157,7 @@ class Element
                     case 'string':
                         switch (key)
                         {
+                            case "data":
                             case "srcset":
                             case "src":
                             case "href":
