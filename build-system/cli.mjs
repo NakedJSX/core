@@ -126,7 +126,7 @@ const options =
                 args: ['alias', 'path'],
                 impl(config, { alias, path })
                 {
-                    config.pathAliases[alias] = path;
+                    config.pathAliases[alias] = configPath(path);
                 }
             },
 
