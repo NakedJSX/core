@@ -184,18 +184,6 @@ export class NakedJSX
         this.#dstAssetDir = path.join(this.#dstDir, 'asset');
 
         //
-        // Common / external CSS
-        //
-
-        if (config.commonCssFile)
-        {
-            this.#commonCssFile = path.join(this.#srcDir, config.commonCssFile);
-                
-            if (!fs.existsSync(this.#commonCssFile))
-                fatal(`Common CSS file ${this.#commonCssFile} doesn't exist`);
-        }
-
-        //
         // Process path aliases
         //
 
@@ -206,6 +194,40 @@ export class NakedJSX
                 fatal(`Source import path ${absPath} for alias ${alias} does not exist`);
 
             this.#pathAliases[alias] = absPath;
+        }
+
+        //
+        // Common / external CSS
+        //
+
+        if (config.commonCssFile)
+        {
+            if (path.isAbsolute(config.commonCssFile))
+            {
+                if (!fs.existsSync(config.commonCssFile))
+                    fatal(`Common CSS file ${config.commonCssFile} doesn't exist`);
+                
+                this.#commonCssFile = config.commonCssFile;
+            }
+            else
+            {
+                let testPath = this.#applyPathAliases(config.commonCssFile);
+                if (testPath !== config.commonCssFile)
+                {
+                    if (!fs.existsSync(testPath))
+                        fatal(`Common CSS file ${testPath} doesn't exist`);
+                }
+                else
+                {
+                    testPath = path.join(this.#srcDir, config.commonCssFile)
+                    if (!fs.existsSync(testPath))
+                        fatal(`Common CSS file ${config.commonCssFile} doesn't exist`);
+                }
+
+                this.#commonCssFile = testPath;
+            }
+
+            log(`Using common CSS file: ${this.#commonCssFile}`);
         }
 
         //
@@ -930,6 +952,19 @@ ${feebackChannels}
         throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}.`);
     }
 
+    #applyPathAliases(file)
+    {
+        if (path.isAbsolute(file))
+            return file;
+        
+        // Apply path alias if one is used
+        for (const [ alias, replacement ] of Object.entries(this.#pathAliases))
+            if (file.startsWith(alias + '/'))
+                return file.replace(alias, replacement);
+        
+        return file;
+    }
+
     #parseAssetImportId(id, importer)
     {
         //
@@ -955,12 +990,7 @@ ${feebackChannels}
             type = 'default';
         
         // Apply path alias if one is used
-        for (const [ alias, path ] of Object.entries(this.#pathAliases))
-            if (file.startsWith(alias + '/'))
-            {
-                file = file.replace(alias, path);
-                break;
-            }
+        file = this.#applyPathAliases(file);
         
         //
         // If the file path is not absolute by this stage,
