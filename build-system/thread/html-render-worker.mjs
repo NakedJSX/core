@@ -1,4 +1,5 @@
 import { parentPort } from 'node:worker_threads';
+import url from 'node:url';
 
 // During job execution, is set to the job sent from the main thread.
 export let currentJob = null;
@@ -39,7 +40,7 @@ parentPort.on(
         currentJob = job;
 
         // The code within the job (Page.Render()) is responsible for passing rendered pages to the parent port.
-        await import(`${job.page.htmlJsFileOut}?breakCache=${importIndex++}`);
+        await import(url.pathToFileURL(job.page.htmlJsFileOut).href + `?breakCache=${importIndex++}`);
 
         // Remove hanging reference
         currentJob = null;

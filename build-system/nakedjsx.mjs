@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import url from 'node:url';
 
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -708,7 +709,7 @@ ${feebackChannels}
             // Page config files can override the default page config
             //
 
-            import(page.configJsFile)
+            import(url.pathToFileURL(page.configJsFile).href)
                 .then(
                     (module) =>
                     {
@@ -908,7 +909,7 @@ ${feebackChannels}
                 result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
             }
 
-            const fetchDynamicJsx = (await import(asset.file)).default;
+            const fetchDynamicJsx = (await import(url.pathToFileURL(asset.file).href)).default;
             await fetchDynamicJsx({ addJsx });
 
             return `export default [${result}]`;
@@ -1045,7 +1046,7 @@ ${feebackChannels}
                     //
 
                     return  {
-                                id: resolveModule(id),
+                                id: url.pathToFileURL(resolveModule(id)).href,
                                 external: 'absolute'
                             };
                 }
@@ -1064,7 +1065,7 @@ ${feebackChannels}
                     //
 
                     return  {
-                                id: resolveModule(id),
+                                id: url.pathToFileURL(resolveModule(id)).href,
                                 external: forClientJs ? false : 'absolute'
                             };
                 }

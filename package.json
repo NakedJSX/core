@@ -48,5 +48,6 @@
   "bugs": {
     "url": "https://github.com/NakedJSX/core/issues"
   },
-  "homepage": "https://nakedjsx.org"
+  "homepage": "https://nakedjsx.org",
+  "packageManager": "yarn@3.5.1"
 }
