@@ -1046,7 +1046,7 @@ ${feebackChannels}
                     //
 
                     return  {
-                                id: url.pathToFileURL(resolveModule(id)).href,
+                                id: url.pathToFileURL(resolveModule(id)).href, // Absolute externals must be in url form
                                 external: 'absolute'
                             };
                 }
@@ -1063,10 +1063,15 @@ ${feebackChannels}
                     // In clientJS, where imports aren't supported, it must
                     // be internal (@nakedjsx/core/page is not used for HTML JS)
                     //
+                    // On Windows, absolute externals need to be file:// URLs.
+                    //
+
+                    const resolved = resolveModule(id);
+                    const external = forClientJs ? false : 'absolute';
 
                     return  {
-                                id: url.pathToFileURL(resolveModule(id)).href,
-                                external: forClientJs ? false : 'absolute'
+                                id: external ? url.pathToFileURL(resolved).href : resolved,
+                                external
                             };
                 }
 
