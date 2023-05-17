@@ -1,6 +1,6 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Build a nice website using JSX and scoped css.",
   "type": "module",
   "bin": {
@@ -48,6 +48,5 @@
   "bugs": {
     "url": "https://github.com/NakedJSX/core/issues"
   },
-  "homepage": "https://nakedjsx.org",
-  "packageManager": "yarn@3.5.1"
+  "homepage": "https://nakedjsx.org"
 }
