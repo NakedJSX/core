@@ -966,6 +966,28 @@ ${feebackChannels}
         return file;
     }
 
+    #nodeResolve(id, importer)
+    {
+        if (importer)
+        {
+            try
+            {
+                return createRequire(url.pathToFileURL(importer)).resolve(id);
+            }
+            catch(error)
+            {
+            }
+        }
+
+        try
+        {
+            return resolveModule(id);
+        }
+        catch(error)
+        {
+        }
+    }
+
     #parseAssetImportId(id, importer)
     {
         //
@@ -995,11 +1017,17 @@ ${feebackChannels}
         
         //
         // If the file path is not absolute by this stage,
-        // interpret it relative to the importer (if we know it).
         //
 
-        if (importer && !path.isAbsolute(file))
-            file = absolutePath(file, path.dirname(importer));
+        if (!path.isAbsolute(file))
+        {
+            const nodeResolvedId = this.#nodeResolve(file, importer);
+
+            if (nodeResolvedId)
+                file = nodeResolvedId;
+            else if (importer)
+                file = absolutePath(file, path.dirname(importer));                
+        }
         
         //
         // Return the id in a standard format ideal for deduplication purposes.
@@ -1094,7 +1122,7 @@ ${feebackChannels}
                                 id,
                                 meta: { definedAs: builder.#definitions[id] }
                             };
-                
+
                 // Check Javascript imports from aliased source paths
                 for (const [ alias, path ] of Object.entries(builder.#pathAliases))
                     if (id.startsWith(alias))
@@ -1119,28 +1147,23 @@ ${feebackChannels}
                             };
 
                 //
-                // Finally, can node resolve it from the deps that this build process knows about?
+                // Can node resolve it from the importer or the deps that this build process knows about?
                 //
                 // This is what allows 'npx nakedjsx' to find the official plugins when
                 // operating on standalone NakedJSX files (i.e. no package.json)
                 //
 
-                try {
-                    const nodeResovledId = resolveModule(id);
+                const nodeResolvedId = builder.#nodeResolve(id, importer);
+                if (nodeResolvedId)
+                {
                     let external = false;
-                    if (!forClientJs && !nodeResovledId.endsWith('.jsx'))
+                    if (!forClientJs && !nodeResolvedId.endsWith('.jsx'))
                         external = 'absolute';
 
                     return  {
-                                id: nodeResovledId,
+                                id: nodeResolvedId,
                                 external
                             };
-                }
-                catch(error)
-                {
-                    //
-                    // We couldn't resolve it, let rollup handle it
-                    //
                 }
 
                 // This import isn't one that we handle, defer to other plugins
