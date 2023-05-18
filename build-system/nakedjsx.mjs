@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
@@ -17,7 +18,6 @@ import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, fatal, isExternalImport, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
-import HtmlRenderPool from './thread/html-render-pool.mjs';
 import { assetUriPathPlaceholder } from './server-document.mjs'
 
 export const packageInfo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json')));
@@ -29,6 +29,18 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 //
 
 const resolveModule = createRequire(import.meta.url).resolve;
+
+//
+// We make a 'current job' object available to page code being rendered.
+// Due to the async nature of the build process we use AsyncLocalStorage.
+//
+
+const currentJobs = new AsyncLocalStorage();
+
+export function getCurrentJob()
+{
+    return currentJobs.getStore()
+}
 
 export const configFilename = '.nakedjsx.json';
 export const emptyConfig =
@@ -59,7 +71,6 @@ export class NakedJSX
     #pathAliases            = {};
     #definitions            = {};
 
-    #htmlRenderPool;
     #htmlJsFileOutVersions  = new Map();
 
     #started                = false;
@@ -148,15 +159,6 @@ export class NakedJSX
             redactedConfig.definitions[key] = '****';
 
         this.#config.quiet || log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
-
-        //
-        // Initialise the HTML rendering worker 'pool'
-        //
-        // NOTE: using more threads (eg. os.cpus().length) is slower or the same,
-        // so this is more about isolating the execution of HTML generation JS.
-        //
-
-        this.#htmlRenderPool = new HtmlRenderPool(1);
     }
 
     async processConfig()
@@ -308,9 +310,6 @@ ${feebackChannels}
 
     exit()
     {
-        if (this.#htmlRenderPool)
-            this.#htmlRenderPool.close();
-
         // wtf, there doesn't seem to be a close feature in the node http server.
 
         this.#config.quiet || this.#logFinalThoughts();
@@ -1591,84 +1590,94 @@ ${feebackChannels}
             page.thisBuild.inlineJs.push(this.#developmentClientJs);
 
         //
-        // Execution of the HTML generation JS happens in another thread.
+        // Page JS is built, import it to execute
         //
 
         const writePromises = [];
         let failed = false;
 
+        // take note of the keys in the default global scope
+        const standardGlobalKeys = new Set(Object.keys(global));
+
         try
         {
-            this.#htmlRenderPool.render(
-                {
-                    developmentMode:    this.#developmentMode,
-                    commonCss:          this.#commonCss,
-                    page
-                },
-                {
-                    onRendered({ outputFilename, htmlContent })
+            await currentJobs
+                .run(
                     {
-                        const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
-                        if (!fullPath.startsWith(builder.#dstDir ))
-                        {
-                            err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
-                            failed = true;
-                        }
-                        else
-                        {
-                            if (builder.#config.pretty)
-                                htmlContent =
-                                    jsBeautifier.html_beautify(
-                                        htmlContent,
-                                        {
-                                            "indent_size": "4",
-                                            "indent_char": " ",
-                                            "max_preserve_newlines": "-1",
-                                            "preserve_newlines": false,
-                                            "keep_array_indentation": false,
-                                            "break_chained_methods": false,
-                                            "indent_scripts": "normal",
-                                            "brace_style": "collapse",
-                                            "space_before_conditional": true,
-                                            "unescape_strings": false,
-                                            "jslint_happy": false,
-                                            "end_with_newline": false,
-                                            "wrap_line_length": "0",
-                                            "indent_inner_html": false,
-                                            "comma_first": false,
-                                            "e4x": false,
-                                            "indent_empty_lines": false
-                                        });
-
-                            log(`Page ${page.uriPath} rendering: ${outputFilename}`);
-                            writePromises.push(fsp.writeFile(fullPath, htmlContent));
-                        }
+                        developmentMode:    this.#developmentMode,
+                        commonCss:          this.#commonCss,
+                        page,
+                        onRendered:         onRendered.bind(this)
                     },
-
-                    async onComplete(error)
-                    {
-                        await Promise.all(writePromises);
-                        
-                        if (failed || error)
-                        {
-                            err(`Server js execution error in page ${page.uriPath}`);
-                            page.abortController.abort(error);
-                            return;
-                        }
-
-                        // Leave the generation JS file in dev mode
-                        if (!builder.#developmentMode)
-                            await fsp.unlink(page.thisBuild.htmlJsFileOut);
-                            
-                        builder.#onPageBuildComplete(page);
-                    }
-                });
+                    async () => import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
+                );
         }
         catch(error)
         {
             err(`error during rollup of ${page.htmlJsFileIn}`);
-            page.abortController.abort(error);
+            console.error(error);
+            failed = true;
         };
+
+        // Remove anything added to global scope
+        for (let key of Object.keys(global))
+            if (!standardGlobalKeys.has(key))
+                delete global[key];
+
+        await Promise.all(writePromises);
+                        
+        if (failed)
+        {
+            err(`Server js execution error in page ${page.uriPath}`);
+            // TODO - mark page as error?
+            builder.#onPageBuildComplete(page);
+            return;
+        }
+
+        // Leave the generation JS file in dev mode
+        if (!builder.#developmentMode)
+            await fsp.unlink(page.thisBuild.htmlJsFileOut);
+            
+        builder.#onPageBuildComplete(page);
+
+        function onRendered({ outputFilename, htmlContent })
+        {
+            const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
+            if (!fullPath.startsWith(builder.#dstDir ))
+            {
+                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
+                failed = true;
+            }
+            else
+            {
+                if (builder.#config.pretty)
+                    htmlContent =
+                        jsBeautifier.html_beautify(
+                            htmlContent,
+                            {
+                                "indent_size": "4",
+                                "indent_char": " ",
+                                "max_preserve_newlines": "-1",
+                                "preserve_newlines": false,
+                                "keep_array_indentation": false,
+                                "break_chained_methods": false,
+                                "indent_scripts": "normal",
+                                "brace_style": "collapse",
+                                "space_before_conditional": true,
+                                "unescape_strings": false,
+                                "jslint_happy": false,
+                                "end_with_newline": false,
+                                "wrap_line_length": "0",
+                                "indent_inner_html": false,
+                                "comma_first": false,
+                                "e4x": false,
+                                "indent_empty_lines": false
+                            });
+
+                log(`Page ${page.uriPath} rendering: ${outputFilename}`);
+                writePromises.push(fsp.writeFile(fullPath, htmlContent));
+            }
+        }
     }
 
     #onPageBuildComplete(page)

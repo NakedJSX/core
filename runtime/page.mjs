@@ -1,7 +1,8 @@
 import { parentPort } from 'node:worker_threads';
 import path from 'node:path';
 
-import { getCache, currentJob, log } from '../build-system/thread/html-render-worker.mjs';
+// import { getCache, currentJob, log } from '../build-system/thread/html-render-worker.mjs';
+import { getCurrentJob } from '../build-system/nakedjsx.mjs';
 import { Ref, ServerDocument } from '../build-system/server-document.mjs';
 import { ScopedCssSet, finaliseCssClasses } from '../build-system/css.mjs';
 import { __nakedjsx_set_document, __nakedjsx_get_document, __nakedjsx_create_element, __nakedjsx_create_fragment, __nakedjsx_append_child } from '@nakedjsx/core/jsx';
@@ -29,7 +30,7 @@ export const Page =
          */
         Render(outputFilename)
         {
-            const { page, commonCss } = currentJob;
+            const { page, commonCss, onRendered } = getCurrentJob();
 
             // Restore the ScopedCssSet prototype lost when passed to the worker
             Object.setPrototypeOf(page.thisBuild.scopedCssSet, ScopedCssSet.prototype);
@@ -105,15 +106,10 @@ export const Page =
             // Render the document to HTML and pass result back to the build thread.
             //
 
-            const document = __nakedjsx_get_document();
-
-            parentPort.postMessage(
+            onRendered(
                 {
-                    rendered:
-                        {
-                            outputFilename: outputFilename ?? page.htmlFile,
-                            htmlContent: document.toHtml({ relativeAssetRoot })
-                        }
+                    outputFilename: outputFilename ?? page.htmlFile,
+                    htmlContent: __nakedjsx_get_document().toHtml({ relativeAssetRoot })
                 });
 
             __nakedjsx_set_document(null);
@@ -134,7 +130,7 @@ export const Page =
          */
         AppendCss(css)
         {
-            currentJob.commonCss += css;
+            getCurrentJob().commonCss += css;
         },
 
         /**
@@ -167,7 +163,7 @@ export const Page =
          */
         GetOutputPath(relativeOutputPath)
         {
-            return path.join(currentJob.page.outputDir, relativeOutputPath);
+            return path.join(getCurrentJob().page.outputDir, relativeOutputPath);
         }
     };
     
