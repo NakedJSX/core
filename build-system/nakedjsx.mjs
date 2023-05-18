@@ -708,28 +708,24 @@ ${feebackChannels}
             // Page config files can override the default page config
             //
 
-            import(pathToFileURL(page.configJsFile).href)
-                .then(
-                    (module) =>
-                    {
-                        module.default(page.thisBuild.config);
+            const module = await import(pathToFileURL(page.configJsFile).href);   
+            module.default(page.thisBuild.config);
 
-                        try
-                        {
-                            this.#buildClientJsPage(page);
-                        }
-                        catch(error)
-                        {
-                            err(`Error building client js for page ${page.uriPath}`);
-                            page.abortController.abort(error);
-                        }
-                    });
+            try
+            {
+                await this.#buildClientJsPage(page);
+            }
+            catch(error)
+            {
+                err(`Error building client js for page ${page.uriPath}`);
+                page.abortController.abort(error);
+            }
         }
         else
         {
             try
             {
-                this.#buildClientJsPage(page);
+                await this.#buildClientJsPage(page);
             }
             catch(error)
             {
@@ -1280,28 +1276,26 @@ ${feebackChannels}
                     name: 'terser',
                     async renderChunk(code, chunk, options, meta)
                     {
-                        return  minify(
-                                    code,
-                                    {
-                                        toplevel: true,
-                                        compress:
-                                            {
-                                                passes: 2, // Shaves 40-50 bytes vs 1 pass on 2-4 KiB input
-                                            },
-                                        mangle:
-                                            {
-                                                toplevel: true,
-                                            },
-                                        sourceMap:  developmentMode
-                                    })
-                                    .then(
-                                        result =>
+                        const result =
+                            await minify(
+                                code,
+                                {
+                                    toplevel: true,
+                                    compress:
                                         {
-                                            return {
-                                                code: result.code,
-                                                map: result.decoded_map
-                                            };
-                                        });
+                                            passes: 2, // Shaves 40-50 bytes vs 1 pass on 2-4 KiB input
+                                        },
+                                    mangle:
+                                        {
+                                            toplevel: true,
+                                        },
+                                    sourceMap:  developmentMode
+                                });
+
+                        return  {
+                                    code: result.code,
+                                    map: result.decoded_map
+                                };
                     }
                 };
     }
@@ -1403,13 +1397,13 @@ ${feebackChannels}
         return fsp.writeFile(`${page.outputDir}/${filename}`, content);
     }
 
-    #buildClientJsPage(page)
+    async #buildClientJsPage(page)
     {
         page.watchFiles = new Set();
 
         if (!page.clientJsFileIn)
         {
-            this.#buildHtmlJs(page);
+            await this.#buildHtmlJs(page);
             return;
         }
 
@@ -1462,78 +1456,70 @@ ${feebackChannels}
                 plugins: [ babelOutputPlugin, ...this.#rollupPlugins.output.client ]
             };    
         
-        rollup(inputOptions)
-            .then(
-                (bundle) =>
+        try
+        {
+            const bundle = await rollup(inputOptions);
+            
+            //
+            // Remember which files, if changed, should trigger a rebuild of this page.
+            // We'll add to this list after compiling the html JS.
+            //
+
+            for (let watchFile of bundle.watchFiles)
+                this.#addWatchFile(watchFile, page);
+
+            const bundlerOutput = await bundle.generate(outputOptions);
+
+            bundle.close();
+
+            const moduleIds = [];
+            const promises = [];
+
+            const chunks = bundlerOutput.output.filter(output => output.type == 'chunk');
+            const assets = bundlerOutput.output.filter(output => output.type == 'asset');
+
+            //
+            // Always output assets (sourcemaps)
+            //
+
+            for (let output of assets)
+                promises.push(this.#emitFile(page, output.fileName, output.source));
+
+            //
+            // emit or inline client JS if we're not inlining it
+            //
+
+            for (let output of chunks)
+            {
+                moduleIds.push(output.moduleIds);
+
+                if (page.thisBuild.config.client.js.inline)
                 {
-                    //
-                    // Remember which files, if changed, should trigger a rebuild of this page.
-                    // We'll add to this list after compiling the html JS.
-                    //
-
-                    for (let watchFile of bundle.watchFiles)
-                        this.#addWatchFile(watchFile, page);
-
-                    return bundle
-                        .generate(outputOptions)
-                        .then(
-                            (bundlerOutput) =>
-                            {
-                                bundle.close();
-
-                                const moduleIds = [];
-                                const promises = [];
-
-                                const chunks = bundlerOutput.output.filter(output => output.type == 'chunk');
-                                const assets = bundlerOutput.output.filter(output => output.type == 'asset');
-
-                                //
-                                // Always output assets (sourcemaps)
-                                //
-
-                                for (let output of assets)
-                                    promises.push(this.#emitFile(page, output.fileName, output.source));
-
-                                //
-                                // emit or inline client JS if we're not inlining it
-                                //
-
-                                for (let output of chunks)
-                                {
-                                    moduleIds.push(output.moduleIds);
-
-                                    if (page.thisBuild.config.client.js.inline)
-                                    {
-                                        page.thisBuild.inlineJs.push(output.code);
-                                    }
-                                    else
-                                    {
-                                        promises.push(this.#emitFile(page, output.fileName, output.code));
-                                        page.thisBuild.clientJsFileOut = output.fileName;
-                                    }
-                                }
-
-                                Promise.all(promises)
-                                    .then(
-                                        () =>
-                                        {
-                                            page.thisBuild.clientJsModuleIds = moduleIds.flat();
-
-                                            // If none of our async tasks failed, continue to the HTML generation
-                                            if (!this.#pagesWithErrors.has(page))
-                                                this.#buildHtmlJs(page);
-                                        });
-                            })
-                })
-            .catch(
-                (error) =>
+                    page.thisBuild.inlineJs.push(output.code);
+                }
+                else
                 {
-                    err(`error during rollup of ${page.clientJsFileIn}`);
-                    page.abortController.abort(error);
-                });
+                    promises.push(this.#emitFile(page, output.fileName, output.code));
+                    page.thisBuild.clientJsFileOut = output.fileName;
+                }
+            }
+
+            await Promise.all(promises);
+
+            page.thisBuild.clientJsModuleIds = moduleIds.flat();
+
+            // If none of our async tasks failed, continue to the HTML generation
+            if (!this.#pagesWithErrors.has(page))
+                await this.#buildHtmlJs(page);
+        }
+        catch(error)
+        {
+            err(`error during rollup of ${page.clientJsFileIn}`);
+            page.abortController.abort(error);
+        };
     }
 
-    #buildHtmlJs(page)
+    async #buildHtmlJs(page)
     {
         if (!page.htmlJsFileIn)
         {
@@ -1568,121 +1554,107 @@ ${feebackChannels}
                 }
             };
 
-        rollup(inputOptions)
-            .then(
-                (bundle) =>
+        const bundle = await rollup(inputOptions);
+
+        //
+        // Also watch the HTML JS imports for changes.
+        //
+        // This includes any asset files and other custom imports.
+        //
+
+        for (let watchFile of bundle.watchFiles)
+            this.#addWatchFile(watchFile, page);
+
+        const output = await bundle.write(outputOptions);
+
+        bundle.close();
+        
+        //
+        // In dev mode, inject the script that long polls the server for changes.
+        //
+
+        if (this.#developmentMode)
+            page.thisBuild.inlineJs.push(this.#developmentClientJs);
+
+        //
+        // Execution of the HTML generation JS happens in another thread.
+        //
+
+        const writePromises = [];
+        let failed = false;
+
+        try
+        {
+            this.#htmlRenderPool.render(
                 {
-                    //
-                    // Also watch the HTML JS imports for changes.
-                    //
-                    // This includes any asset files and other custom imports.
-                    //
-
-                    for (let watchFile of bundle.watchFiles)
-                        this.#addWatchFile(watchFile, page);
-
-                    return bundle
-                        .write(outputOptions)
-                        .then(
-                            (output) =>
-                            {
-                                bundle.close();
-                                
-                                //
-                                // In dev mode, inject the script that long polls the server for changes.
-                                //
-
-                                if (this.#developmentMode)
-                                    page.thisBuild.inlineJs.push(this.#developmentClientJs);
-
-                                //
-                                // Execution of the HTML generation JS happens in another thread.
-                                //
-
-                                const writePromises = [];
-                                let failed = false;
-
-                                this.#htmlRenderPool.render(
-                                    {
-                                        developmentMode:    this.#developmentMode,
-                                        commonCss:          this.#commonCss,
-                                        page
-                                    },
-                                    {
-                                        onRendered({ outputFilename, htmlContent })
-                                        {
-                                            const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
-                                            if (!fullPath.startsWith(builder.#dstDir ))
-                                            {
-                                                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
-                                                failed = true;
-                                            }
-                                            else
-                                            {
-                                                if (builder.#config.pretty)
-                                                    htmlContent =
-                                                        jsBeautifier.html_beautify(
-                                                            htmlContent,
-                                                            {
-                                                                "indent_size": "4",
-                                                                "indent_char": " ",
-                                                                "max_preserve_newlines": "-1",
-                                                                "preserve_newlines": false,
-                                                                "keep_array_indentation": false,
-                                                                "break_chained_methods": false,
-                                                                "indent_scripts": "normal",
-                                                                "brace_style": "collapse",
-                                                                "space_before_conditional": true,
-                                                                "unescape_strings": false,
-                                                                "jslint_happy": false,
-                                                                "end_with_newline": false,
-                                                                "wrap_line_length": "0",
-                                                                "indent_inner_html": false,
-                                                                "comma_first": false,
-                                                                "e4x": false,
-                                                                "indent_empty_lines": false
-                                                            });
-
-                                                log(`Page ${page.uriPath} rendering: ${outputFilename}`);
-                                                writePromises.push(fsp.writeFile(fullPath, htmlContent));
-                                            }
-                                        },
-
-                                        onComplete(error)
-                                        {
-                                            Promise
-                                                .all(writePromises)
-                                                .then(
-                                                    () =>
-                                                    {
-                                                        if (failed || error)
-                                                        {
-                                                            err(`Server js execution error in page ${page.uriPath}`);
-                                                            page.abortController.abort(error);
-                                                            return;
-                                                        }
-
-                                                        if (builder.#developmentMode)
-                                                        {
-                                                            // Leave the generation JS file in dev mode
-                                                            builder.#onPageBuildComplete(page);
-                                                        }
-                                                        else
-                                                        {
-                                                            fsp .unlink(page.htmlJsFileOut)
-                                                                .then(() => builder.#onPageBuildComplete(page));
-                                                        }
-                                                    });
-                                        }
-                                    });
-                            })
-                })
-            .catch(
-                error =>
+                    developmentMode:    this.#developmentMode,
+                    commonCss:          this.#commonCss,
+                    page
+                },
                 {
-                    err(`error during rollup of ${page.htmlJsFileIn}`);
-                    page.abortController.abort(error);
+                    onRendered({ outputFilename, htmlContent })
+                    {
+                        const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
+                        if (!fullPath.startsWith(builder.#dstDir ))
+                        {
+                            err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
+                            failed = true;
+                        }
+                        else
+                        {
+                            if (builder.#config.pretty)
+                                htmlContent =
+                                    jsBeautifier.html_beautify(
+                                        htmlContent,
+                                        {
+                                            "indent_size": "4",
+                                            "indent_char": " ",
+                                            "max_preserve_newlines": "-1",
+                                            "preserve_newlines": false,
+                                            "keep_array_indentation": false,
+                                            "break_chained_methods": false,
+                                            "indent_scripts": "normal",
+                                            "brace_style": "collapse",
+                                            "space_before_conditional": true,
+                                            "unescape_strings": false,
+                                            "jslint_happy": false,
+                                            "end_with_newline": false,
+                                            "wrap_line_length": "0",
+                                            "indent_inner_html": false,
+                                            "comma_first": false,
+                                            "e4x": false,
+                                            "indent_empty_lines": false
+                                        });
+
+                            log(`Page ${page.uriPath} rendering: ${outputFilename}`);
+                            writePromises.push(fsp.writeFile(fullPath, htmlContent));
+                        }
+                    },
+
+                    async onComplete(error)
+                    {
+                        await Promise.all(writePromises);
+                        
+                        if (failed || error)
+                        {
+                            err(`Server js execution error in page ${page.uriPath}`);
+                            page.abortController.abort(error);
+                            return;
+                        }
+
+                        // Leave the generation JS file in dev mode
+                        if (!builder.#developmentMode)
+                            await fsp.unlink(page.htmlJsFileOut);
+                            
+                        builder.#onPageBuildComplete(page);
+                    }
                 });
+        }
+        catch(error)
+        {
+            err(`error during rollup of ${page.htmlJsFileIn}`);
+            page.abortController.abort(error);
+        };
     }
 
     #onPageBuildComplete(page)
