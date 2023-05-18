@@ -129,6 +129,15 @@ export const Page =
         },
 
         /**
+         * Append CSS to the common CSS placed before extracted scoped CSS.
+         * @param {*} css - CSS to be added.
+         */
+        AppendCss(css)
+        {
+            currentJob.commonCss += css;
+        },
+
+        /**
          * Append JSX to the body tag.
          * @param {*} child - JSX to be appended to the body tag.
          */
