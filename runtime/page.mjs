@@ -1,7 +1,6 @@
 import { parentPort } from 'node:worker_threads';
 import path from 'node:path';
 
-// import { getCache, currentJob, log } from '../build-system/thread/html-render-worker.mjs';
 import { getCurrentJob } from '../build-system/nakedjsx.mjs';
 import { Ref, ServerDocument } from '../build-system/server-document.mjs';
 import { ScopedCssSet, finaliseCssClasses } from '../build-system/css.mjs';
@@ -148,14 +147,6 @@ export const Page =
         CreateRef()
         {
             return new Ref();
-        },
-
-        /**
-         * Get access to an map that persists between pages and incremental builds
-         */
-        GetCache(name)
-        {
-            return getCache(name);
         },
 
         /**
