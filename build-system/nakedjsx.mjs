@@ -288,7 +288,8 @@ NOTE: Things subject to change until version 1.0.0,
       breaking changes linked to Y increments in 0.Y.Z.
 
       After 1.0.0, breaking changes will be linked to
-      X increments in X.Y.Z.
+      X increments in X.Y.Z and of course all effort
+      will be made to avoid them.
 
 Roadmap to 1.0.0:
 
