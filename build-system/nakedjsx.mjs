@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import url from 'node:url';
 
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 
 import chokidar from 'chokidar';
@@ -26,7 +25,7 @@ export const packageInfo = JSON.parse(fs.readFileSync(path.join(path.dirname(fil
 const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
 //
-// We are using createRequire(..).resolve to allow babel to find the plugin under yarn pnp.
+// We are using createRequire(..).resolve to allow babel to find plugins under yarn pnp.
 //
 
 const resolveModule = createRequire(import.meta.url).resolve;
@@ -709,7 +708,7 @@ ${feebackChannels}
             // Page config files can override the default page config
             //
 
-            import(url.pathToFileURL(page.configJsFile).href)
+            import(pathToFileURL(page.configJsFile).href)
                 .then(
                     (module) =>
                     {
@@ -909,7 +908,7 @@ ${feebackChannels}
                 result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
             }
 
-            const fetchDynamicJsx = (await import(url.pathToFileURL(asset.file).href)).default;
+            const fetchDynamicJsx = (await import(pathToFileURL(asset.file).href)).default;
             await fetchDynamicJsx({ addJsx });
 
             return `export default [${result}]`;
@@ -972,7 +971,7 @@ ${feebackChannels}
         {
             try
             {
-                return createRequire(url.pathToFileURL(importer)).resolve(id);
+                return createRequire(pathToFileURL(importer)).resolve(id);
             }
             catch(error)
             {
@@ -1074,7 +1073,7 @@ ${feebackChannels}
                     //
 
                     return  {
-                                id: url.pathToFileURL(resolveModule(id)).href, // Absolute externals must be in url form
+                                id: pathToFileURL(resolveModule(id)).href, // Absolute externals must be in url form
                                 external: 'absolute'
                             };
                 }
@@ -1098,7 +1097,7 @@ ${feebackChannels}
                     const external = forClientJs ? false : 'absolute';
 
                     return  {
-                                id: external ? url.pathToFileURL(resolved).href : resolved,
+                                id: external ? pathToFileURL(resolved).href : resolved,
                                 external
                             };
                 }
