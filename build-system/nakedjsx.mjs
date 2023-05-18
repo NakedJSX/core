@@ -54,29 +54,30 @@ export class NakedJSX
     #commonCssFile;
     #commonCss;
 
-    #assetImportPlugins = new Map();
+    #assetImportPlugins     = new Map();
 
-    #pathAliases        = {};
-    #definitions        = {};
+    #pathAliases            = {};
+    #definitions            = {};
 
     #htmlRenderPool;
+    #htmlJsFileOutVersions  = new Map();
 
-    #started            = false;
-    #initialising       = true;
-    #building           = false;
+    #started                = false;
+    #initialising           = true;
+    #building               = false;
     
-    #pages              = {};
-    #pagesToBuild       = new Set();
+    #pages                  = {};
+    #pagesToBuild           = new Set();
     #pagesInProgress;
     #pagesWithErrors;
 
     #watcher;
-    #watchFiles         = new Map(); // filename -> Set<page>
+    #watchFiles             = new Map(); // filename -> Set<page>
 
     #rollupPlugins;
 
-    #terserCache        = new Map();
-    #babelInputCache    = new Map();
+    #terserCache            = new Map();
+    #babelInputCache        = new Map();
 
     //
     // This cache is used internally by our import plugin.
@@ -89,7 +90,7 @@ export class NakedJSX
     // so it is implemented internally.
     //
 
-    #importLoadCache    = new Map();
+    #importLoadCache        = new Map();
 
     constructor(
         rootDir,
@@ -543,8 +544,8 @@ ${feebackChannels}
 
         if (match.type === 'html')
         {
-            page.htmlJsFileIn   = fullPath;
-            page.htmlJsFileOut  = `${this.#dstDir}/${filename}.mjs`;
+            page.htmlJsFileIn       = fullPath;
+            page.htmlJsFileOutBase  = `${this.#dstDir}/${filename}`;
         }
         else if (match.type === 'client')
         {
@@ -1519,6 +1520,16 @@ ${feebackChannels}
         };
     }
 
+    #nextHtmlJsFileOut(baseFilename)
+    {
+        let currentVersion = this.#htmlJsFileOutVersions.get(baseFilename) || 0;
+
+        currentVersion++;
+        this.#htmlJsFileOutVersions.set(baseFilename, currentVersion);
+
+        return `${baseFilename}.${currentVersion}.mjs`;
+    }
+
     async #buildHtmlJs(page)
     {
         if (!page.htmlJsFileIn)
@@ -1542,10 +1553,12 @@ ${feebackChannels}
                 input: page.htmlJsFileIn,
                 plugins: this.#rollupPlugins.input.server
             };
+
+        page.thisBuild.htmlJsFileOut = this.#nextHtmlJsFileOut(page.htmlJsFileOutBase)
     
         const outputOptions =
             {
-                file: page.htmlJsFileOut,
+                file: page.thisBuild.htmlJsFileOut,
                 sourcemap: 'inline',
                 format: 'es',
                 plugins: this.#rollupPlugins.output.server,
@@ -1644,7 +1657,7 @@ ${feebackChannels}
 
                         // Leave the generation JS file in dev mode
                         if (!builder.#developmentMode)
-                            await fsp.unlink(page.htmlJsFileOut);
+                            await fsp.unlink(page.thisBuild.htmlJsFileOut);
                             
                         builder.#onPageBuildComplete(page);
                     }

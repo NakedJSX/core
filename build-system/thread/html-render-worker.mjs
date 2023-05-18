@@ -29,9 +29,6 @@ export function getCache(name)
 // take note of the keys in the default global scope
 const standardGlobalKeys = new Set(Object.keys(global));
 
-// We need to make each subsequent import of the same filename look unique ...
-let importIndex = 0;
-
 parentPort.on(
     'message',
     async (job) =>
@@ -40,7 +37,7 @@ parentPort.on(
         currentJob = job;
 
         // The code within the job (Page.Render()) is responsible for passing rendered pages to the parent port.
-        await import(url.pathToFileURL(job.page.htmlJsFileOut).href + `?breakCache=${importIndex++}`);
+        await import(url.pathToFileURL(job.page.thisBuild.htmlJsFileOut).href);
 
         // Remove hanging reference
         currentJob = null;
