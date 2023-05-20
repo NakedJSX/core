@@ -38,6 +38,17 @@ function configPath(filepath)
 
 const options =
     {
+        '--import-resolve-override':
+            {
+                advanced: true,
+                desc: 'Resolve imports of <pkg> as <location>.',
+                args: ['pkg', 'location'],
+                impl(config, { pkg, location})
+                {                    
+                    config.importResolveOverrides[pkg] = location;
+                }
+            },
+
         '--do-not-forward':
             {
                 advanced: true,

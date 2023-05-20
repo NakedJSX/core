@@ -1,4 +1,4 @@
-import { getContext, renderNow, setNewContext, createContextRestorePoint, restoreContext } from "../runtime/jsx.mjs";
+import { getContext, renderNow, setNewContext, createContextRestorePoint, restoreContext } from "./page.mjs";
 
 export const assetUriPathPlaceholder = '__NAKEDJSX_ASSET_DIR__';
 

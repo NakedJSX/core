@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 
 import { err } from '../util.mjs';
-import { __nakedjsx_create_element } from '@nakedjsx/core/jsx'
 
 // babel plugin implementation
 export default function(babel, options)
@@ -46,7 +45,7 @@ export default function(babel, options)
                 {
                     const callee = nodePath.node.callee;
 
-                    if (callee.type !== 'Identifier' || callee.name !== __nakedjsx_create_element.name)
+                    if (callee.type !== 'Identifier' || callee.name !== '__nakedjsx_create_element')
                         return;
 
                     //

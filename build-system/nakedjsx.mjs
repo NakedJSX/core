@@ -16,9 +16,10 @@ import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, fatal, isExternalImport, absolutePath, enableBenchmark } from './util.mjs';
+import { log, warn, err, fatal, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
-import { assetUriPathPlaceholder } from './server-document.mjs'
+import { assetUriPathPlaceholder } from '../runtime/page/document.mjs'
+import { runWithAsyncLocalStorage } from '../runtime/page/page.mjs';
 
 export const packageInfo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json')));
 
@@ -48,7 +49,8 @@ export const emptyConfig =
         pathAliases:                {},
         definitions:                {},
         browserslistTargetQuery:    'defaults',
-        plugins:                    []
+        plugins:                    [],
+        importResolveOverrides:     {}
     };
 
 export class NakedJSX
@@ -492,7 +494,7 @@ ${feebackChannels}
 
         const fullPath = `${this.#srcDir}/${filename}`;
 
-        if (match.type === 'html')
+        if (match.type === 'page' || match.type === 'html')
         {
             delete page.htmlJsFileIn;
         }
@@ -512,7 +514,7 @@ ${feebackChannels}
 
     #matchPageJsFile(filename)
     {
-        const pageEntryMatch    = /^(.*)-(html|client|config)\.(jsx|mjs|js)$/;
+        const pageEntryMatch    = /^(.*)-(page|html|client|config)\.(jsx|mjs|js)$/;
         const match             = filename.match(pageEntryMatch);
 
         if (match)
@@ -542,7 +544,7 @@ ${feebackChannels}
     {
         const fullPath = `${this.#srcDir}/${filename}`;
 
-        if (match.type === 'html')
+        if (match.type === 'page' || match.type === 'html')
         {
             page.htmlJsFileIn       = fullPath;
             page.htmlJsFileOutBase  = `${this.#dstDir}/${filename}`;
@@ -670,19 +672,19 @@ ${feebackChannels}
                 if (reason.target.reason)
                     err(reason.target.reason.stack);
 
-                this.#pagesWithErrors.add(page);
-                this.#onPageBuildComplete(page);
+                this.#onPageBuildComplete(page, true);
             });
         
         //
         // page.thisBuild is a dedicated place for per-build data
         //
 
-        page.thisBuild = { inlineJs: [] };
+        page.thisBuild =
+            {
+                inlineJs:       [],
+                scopedCssSet:   new ScopedCssSet()
+            };
 
-        page.thisBuild.scopedCssSet = new ScopedCssSet();
-        page.thisBuild.scopedCssSet.reserveCommonCssClasses(this.#commonCss);
-        
         //
         // Default page config - should this be in a dedicated file?
         //
@@ -700,40 +702,43 @@ ${feebackChannels}
         // Reset the page watching
         //
 
-        this.#addWatchFile(page.configJsFile,   page);
         this.#addWatchFile(this.#commonCssFile, page);
+
+        await this.#buildHtmlJs(page);
         
-        if (page.configJsFile)
-        {
-            //
-            // Page config files can override the default page config
-            //
+        // if (page.configJsFile)
+        // {
+        //     //
+        //     // Page config files can override the default page config
+        //     //
 
-            const module = await import(pathToFileURL(page.configJsFile).href);   
-            module.default(page.thisBuild.config);
+        //     this.#addWatchFile(page.configJsFile, page);
 
-            try
-            {
-                await this.#buildClientJsPage(page);
-            }
-            catch(error)
-            {
-                err(`Error building client js for page ${page.uriPath}`);
-                page.abortController.abort(error);
-            }
-        }
-        else
-        {
-            try
-            {
-                await this.#buildClientJsPage(page);
-            }
-            catch(error)
-            {
-                err(`Error building client js for page ${page.uriPath}`);
-                page.abortController.abort(error);
-            }
-        }
+        //     const module = await import(pathToFileURL(page.configJsFile).href);   
+        //     module.default(page.thisBuild.config);
+
+        //     try
+        //     {
+        //         await this.#buildClientJsPage(page);
+        //     }
+        //     catch(error)
+        //     {
+        //         err(`Error building client js for page ${page.uriPath}`);
+        //         page.abortController.abort(error);
+        //     }
+        // }
+        // else
+        // {
+        //     try
+        //     {
+        //         await this.#buildClientJsPage(page);
+        //     }
+        //     catch(error)
+        //     {
+        //         err(`Error building client js for page ${page.uriPath}`);
+        //         page.abortController.abort(error);
+        //     }
+        // }
     }
 
     #getBabelInputPlugin(forClientJs)
@@ -755,7 +760,9 @@ ${feebackChannels}
                                 pragma:     forClientJs ? '__nakedjsx_create_element'  : '__nakedjsx_create_deferred_element',
                                 pragmaFrag: forClientJs ? '__nakedjsx_create_fragment' : '__nakedjsx_create_deferred_fragment'
                             }
-                        ]
+                        ],
+
+                        path.join(nakedJsxSourceDir, 'babel', 'plugin-await-page-api.mjs')
                     ]
             };
 
@@ -1047,8 +1054,14 @@ ${feebackChannels}
 
             async resolveId(id, importer, options)
             {
-                if (options.isEntry)
-                    return null;
+                // if (options.isEntry)
+                //     return null;
+                
+                if (id.startsWith('node:'))
+                    return  {
+                                id,
+                                external: 'absolute'
+                            };
                 
                 //
                 // For the NakedJSX runtime, resolveModule is used to ensure
@@ -1075,8 +1088,10 @@ ${feebackChannels}
                             };
                 }
 
-                if (id === '@nakedjsx/core/jsx')
+                if (id === '@nakedjsx/core/client')
                 {
+                    // UPDATE THIS COMMENT
+
                     //
                     // @nakedjsx/core/page needs to be for client JS, and
                     // external for HTML JS.
@@ -1090,14 +1105,34 @@ ${feebackChannels}
                     // On Windows, absolute externals need to be file:// URLs.
                     //
 
-                    const resolved = resolveModule(id);
-                    const external = forClientJs ? false : 'absolute';
-
                     return  {
-                                id: external ? pathToFileURL(resolved).href : resolved,
-                                external
+                                id: resolveModule(id),
+                                external: false
                             };
                 }
+
+                // // overriden by config?
+                // const resolveOverride = builder.#config.importResolveOverrides[id];
+                // if (resolveOverride)
+                //     return  {
+                //                 id: resolveOverride
+                //             };
+
+                // for (const [pkg, override] of Object.entries(builder.#config.importResolveOverrides))
+                // {
+                //     if (id === pkg)
+                //         return  {
+                //                     id: override,
+                //                     external: 'absolute'
+                //                 };
+                    
+                //     if (id.startsWith(pkg + '/'))
+                //         return  {
+                //                     id: id.replace(pkg, override),
+                //                     external: 'absolute'
+                //                 };
+                                
+                // }
 
                 // Asset imports
                 if (id.startsWith(':'))
@@ -1157,7 +1192,7 @@ ${feebackChannels}
                         external = 'absolute';
 
                     return  {
-                                id: nodeResolvedId,
+                                id: external ? pathToFileURL(nodeResolvedId).href : nodeResolvedId,
                                 external
                             };
                 }
@@ -1303,16 +1338,30 @@ ${feebackChannels}
 
     #createRollupInputPlugins(forClientJs)
     {
-        const injections =
-            {
-                '__nakedjsx_create_element':  ['@nakedjsx/core/jsx', '__nakedjsx_create_element'],
-                '__nakedjsx_create_fragment': ['@nakedjsx/core/jsx', '__nakedjsx_create_fragment']
-            };
-        
-        if (!forClientJs)
+        let injections;
+
+        //
+        // The JSX 'runtime' has been split into seperate implementations
+        // for page and client.
+        //
+
+        if (forClientJs)
         {
-            injections['__nakedjsx_create_deferred_element']  = ['@nakedjsx/core/jsx', '__nakedjsx_create_deferred_element'];
-            injections['__nakedjsx_create_deferred_fragment'] = ['@nakedjsx/core/jsx', '__nakedjsx_create_deferred_fragment'];
+            injections =
+                {
+                    '__nakedjsx_create_element':  ['@nakedjsx/core/client', '__nakedjsx_create_element'],
+                    '__nakedjsx_create_fragment': ['@nakedjsx/core/client', '__nakedjsx_create_fragment']
+                };
+        }
+        else
+        {
+            injections =
+                {
+                    '__nakedjsx_create_element':            ['@nakedjsx/core/page', '__nakedjsx_create_element'],
+                    '__nakedjsx_create_fragment':           ['@nakedjsx/core/page', '__nakedjsx_create_fragment'],
+                    '__nakedjsx_create_deferred_element':   ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_element'],
+                    '__nakedjsx_create_deferred_fragment':  ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_fragment']
+                };
         }
 
         const plugins =
@@ -1323,7 +1372,7 @@ ${feebackChannels}
                 // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
                 this.#getImportPlugin(forClientJs),
 
-                // The babel JSX compiler will output code that refers to @nakedjsx/core/jsx exports
+                // The babel JSX compiler will output calls to __nakedjsx_* functions
                 inject(injections),
             ];
         
@@ -1398,15 +1447,10 @@ ${feebackChannels}
         return fsp.writeFile(`${page.outputDir}/${filename}`, content);
     }
 
-    async #buildClientJsPage(page)
+    async #buildClientJs(page)
     {
-        page.watchFiles = new Set();
-
         if (!page.clientJsFileIn)
-        {
-            await this.#buildHtmlJs(page);
             return;
-        }
 
         const inputOptions =
             {
@@ -1418,6 +1462,8 @@ ${feebackChannels}
         // Most of our plugins are reused for all files, however our babel based css-extraction
         // needs to be able to receive a per-rollup-output-file object in which to place the
         // extracted CSS classes.
+        //
+        // That object may have different reserved class names depending on the page being built.
         //
 
         const babelOutputPlugin =
@@ -1434,8 +1480,8 @@ ${feebackChannels}
                                 }
                             ],
 
-                            // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
-                            path.join(nakedJsxSourceDir, 'babel', 'plugin-iife.mjs')
+                            // // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
+                            // path.join(nakedJsxSourceDir, 'babel', 'plugin-iife.mjs')
                         ],
                     targets:    this.#config.browserslistTargetQuery,
                     presets:
@@ -1508,15 +1554,11 @@ ${feebackChannels}
             await Promise.all(promises);
 
             page.thisBuild.clientJsModuleIds = moduleIds.flat();
-
-            // If none of our async tasks failed, continue to the HTML generation
-            if (!this.#pagesWithErrors.has(page))
-                await this.#buildHtmlJs(page);
         }
         catch(error)
         {
             err(`error during rollup of ${page.clientJsFileIn}`);
-            page.abortController.abort(error);
+            this.#onPageBuildComplete(page, true)
         };
     }
 
@@ -1607,9 +1649,15 @@ ${feebackChannels}
                         developmentMode:    this.#developmentMode,
                         commonCss:          this.#commonCss,
                         page,
-                        onRendered:         onRendered.bind(this)
+                        onRenderStart,
+                        onRendered
                     },
-                    async () => import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
+                    async () =>
+                    {
+                        runWithAsyncLocalStorage(
+                            () => import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
+                            );
+                    }
                 );
         }
         catch(error)
@@ -1629,8 +1677,7 @@ ${feebackChannels}
         if (failed)
         {
             err(`Server js execution error in page ${page.uriPath}`);
-            // TODO - mark page as error?
-            builder.#onPageBuildComplete(page);
+            builder.#onPageBuildComplete(page, true);
             return;
         }
 
@@ -1640,48 +1687,72 @@ ${feebackChannels}
             
         builder.#onPageBuildComplete(page);
 
-        function onRendered({ outputFilename, htmlContent })
+        async function onRenderStart(outputFilename)
         {
-            const fullPath = path.normalize(path.join(page.outputDir, outputFilename));
+            log(`Page ${page.uriPath} rendering: ${outputFilename}`);
+
+            page.thisBuild.nextOutputFilename = outputFilename;
+
+            //
+            // Now that Page.Render() has been called, we can finalise our common CSS
+            // and reserve all known classes so that generated classes do not clash.
+            //
+            
+            page.thisBuild.scopedCssSet.reserveCommonCssClasses(getCurrentJob().commonCss);
+
+            //
+            // Now that common CSS class names have been reserved, we can process
+            // any client JS and extract / generate scoped CSS classes.
+            //
+
+            await builder.#buildClientJs(page);
+        }
+
+        function onRendered(htmlContent)
+        {
+            const outputFilename    = page.thisBuild.nextOutputFilename;
+            const fullPath          = path.normalize(path.join(page.outputDir, outputFilename));
+
             if (!fullPath.startsWith(builder.#dstDir ))
             {
                 err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
                 failed = true;
+                return;
             }
-            else
-            {
-                if (builder.#config.pretty)
-                    htmlContent =
-                        jsBeautifier.html_beautify(
-                            htmlContent,
-                            {
-                                "indent_size": "4",
-                                "indent_char": " ",
-                                "max_preserve_newlines": "-1",
-                                "preserve_newlines": false,
-                                "keep_array_indentation": false,
-                                "break_chained_methods": false,
-                                "indent_scripts": "normal",
-                                "brace_style": "collapse",
-                                "space_before_conditional": true,
-                                "unescape_strings": false,
-                                "jslint_happy": false,
-                                "end_with_newline": false,
-                                "wrap_line_length": "0",
-                                "indent_inner_html": false,
-                                "comma_first": false,
-                                "e4x": false,
-                                "indent_empty_lines": false
-                            });
 
-                log(`Page ${page.uriPath} rendering: ${outputFilename}`);
-                writePromises.push(fsp.writeFile(fullPath, htmlContent));
-            }
+            if (builder.#config.pretty)
+                htmlContent =
+                    jsBeautifier.html_beautify(
+                        htmlContent,
+                        {
+                            "indent_size": "4",
+                            "indent_char": " ",
+                            "max_preserve_newlines": "-1",
+                            "preserve_newlines": false,
+                            "keep_array_indentation": false,
+                            "break_chained_methods": false,
+                            "indent_scripts": "normal",
+                            "brace_style": "collapse",
+                            "space_before_conditional": true,
+                            "unescape_strings": false,
+                            "jslint_happy": false,
+                            "end_with_newline": false,
+                            "wrap_line_length": "0",
+                            "indent_inner_html": false,
+                            "comma_first": false,
+                            "e4x": false,
+                            "indent_empty_lines": false
+                        });
+            
+            writePromises.push(fsp.writeFile(fullPath, htmlContent));
         }
     }
 
-    #onPageBuildComplete(page)
+    #onPageBuildComplete(page, hasError)
     {
+        if (hasError)
+            this.#pagesWithErrors.add(page);
+
         if (!this.#pagesInProgress.has(page))
         {
             // If one or more parallel build tasks failed we can end up here

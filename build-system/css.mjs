@@ -155,8 +155,6 @@ export class ScopedCssSet
 
 export function finaliseCssClasses(document, commonCss, scopedCssSet)
 {
-    const developmentMode = false; // TODO
-
     //
     // Now that the document is complete, find all elements that have a CSS attribute.
     // Then output a bunch of CSS classes, deduplicating as appropriate.
@@ -167,8 +165,7 @@ export function finaliseCssClasses(document, commonCss, scopedCssSet)
     return loadCss(
         commonCss + scopedCssSet.collateAll(),
         {
-            renameVariables: true,
-            developmentMode
+            renameVariables: true
         });
 
     function findElements(element)
@@ -226,12 +223,6 @@ export function loadCss(input, options)
     //
 
     const minifyOptions = { comments: false };
-
-    if (options?.developmentMode)
-    {
-        // Retain /*! */ style comments, useful for debugging our scoped CSS
-        minifyOptions.comments = 'exclamation';
-    }
 
     ast = syntax.compress(ast, minifyOptions).ast;
 
