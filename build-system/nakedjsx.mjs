@@ -302,8 +302,9 @@ NOTE: Things subject to change until version 1.0.0,
 
 Roadmap to 1.0.0:
 
-- Client JSX refs
-- Ability for HTML JS to make refs available to client JS
+- Async JSX tags
+- Client JSX refs to DOM nodes
+- Ability for HTML JS to make refs available to client JS?
 - Ability to configure default options for plugins
 - Tests
 - Incorporate feedback
@@ -1385,8 +1386,6 @@ ${feebackChannels}
         {
             injections =
                 {
-                    '__nakedjsx_create_element':            ['@nakedjsx/core/page', '__nakedjsx_create_element'],
-                    '__nakedjsx_create_fragment':           ['@nakedjsx/core/page', '__nakedjsx_create_fragment'],
                     '__nakedjsx_create_deferred_element':   ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_element'],
                     '__nakedjsx_create_deferred_fragment':  ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_fragment']
                 };
