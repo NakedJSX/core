@@ -6,6 +6,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process'
 
 import chokidar from 'chokidar';
 import { minify } from 'terser';
@@ -247,6 +248,10 @@ export class NakedJSX
 
         for (let pluginPackageNameOrPath of config.plugins)
         {
+            if (config.importResolveOverrides[pluginPackageNameOrPath])
+                pluginPackageNameOrPath =
+                    pathToFileURL(config.importResolveOverrides[pluginPackageNameOrPath]).href;
+
             const { default: pluginRegistration } = await import(pluginPackageNameOrPath);
 
             pluginRegistration(
@@ -979,6 +984,28 @@ ${feebackChannels}
             }
             catch(error)
             {
+                if (error.code === 'MODULE_NOT_FOUND' && error.pnpCode === 'UNDECLARED_DEPENDENCY')
+                {
+                    //
+                    // We are using yarn pnp, which is great, however it really doesn't
+                    // like it when you try and import something that isn't declared as a dependency.
+                    //
+                    // This happens when a plugin exports some jsx that we've compiled into our page.
+                    // If that code tries to use a package from where it came from, then it looks
+                    // like NakedJSX itself it trying to import it.
+                    //
+                    // Since we know this is a yarn pnp thing, we can do a cheeky CLI one-liner 
+                    // to get what we want.
+                    //
+
+                    err(
+                        "It looks like you're using yarn pnp, and you're going to need to\n" +
+                        "enable yarn pnp 'loose mode' to get rid of the following error.\n" +
+                        "Even then it will log warnings so you might want to run with\n" +
+                        "PNP_DEBUG_LEVEL=0 in your environment.\n");
+
+                    throw error;
+                }
             }
         }
 
@@ -1111,12 +1138,13 @@ ${feebackChannels}
                             };
                 }
 
-                // // overriden by config?
-                // const resolveOverride = builder.#config.importResolveOverrides[id];
-                // if (resolveOverride)
-                //     return  {
-                //                 id: resolveOverride
-                //             };
+                // overriden by config?
+                const resolveOverride = builder.#config.importResolveOverrides[id];
+                if (resolveOverride)
+                    return  {
+                                id: resolveOverride,
+                                external: false
+                            };
 
                 // for (const [pkg, override] of Object.entries(builder.#config.importResolveOverrides))
                 // {
@@ -1601,7 +1629,8 @@ ${feebackChannels}
         const outputOptions =
             {
                 file: page.thisBuild.htmlJsFileOut,
-                sourcemap: 'inline',
+                sourcemap: true,
+                sourcemapExcludeSources: true,
                 format: 'es',
                 plugins: this.#rollupPlugins.output.server,
                 globals: {
@@ -1654,8 +1683,8 @@ ${feebackChannels}
                     },
                     async () =>
                     {
-                        runWithAsyncLocalStorage(
-                            () => import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
+                        await runWithAsyncLocalStorage(
+                            async () => await import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
                             );
                     }
                 );

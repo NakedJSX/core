@@ -8,7 +8,7 @@ import { Ref, ServerDocument } from './document.mjs';
 
 const asyncLocalStorage = new AsyncLocalStorage();
 
-export function runWithAsyncLocalStorage(callback)
+export async function runWithAsyncLocalStorage(callback)
 {
     //
     // Our simple static Page.* API is enabled by the
@@ -17,7 +17,7 @@ export function runWithAsyncLocalStorage(callback)
     // rolled up page generation file is via here.
     //
 
-    asyncLocalStorage.run(
+    await asyncLocalStorage.run(
         {
             contexts: [{}]
         },
