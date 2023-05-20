@@ -20,7 +20,7 @@ import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
 import { log, warn, err, fatal, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import { assetUriPathPlaceholder } from '../runtime/page/document.mjs'
-import { runWithAsyncLocalStorage } from '../runtime/page/page.mjs';
+import { runWithPageAsyncLocalStorage } from '../runtime/page/page.mjs';
 
 export const packageInfo = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../package.json')));
 
@@ -1682,7 +1682,7 @@ ${feebackChannels}
                     },
                     async () =>
                     {
-                        await runWithAsyncLocalStorage(
+                        await runWithPageAsyncLocalStorage(
                             async () => await import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
                             );
                     }

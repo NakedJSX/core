@@ -1,4 +1,4 @@
-import { getContext, renderNow, setNewContext, createContextRestorePoint, restoreContext } from "./page.mjs";
+import { Page, renderNow } from "./page.mjs";
 
 export const assetUriPathPlaceholder = '__NAKEDJSX_ASSET_DIR__';
 
@@ -213,16 +213,16 @@ export class Ref
     set(element)
     {
         // Capture the current context, which we'll restore when adding children to this Ref.
-        this.#context = getContext();
+        this.#context = Page.ContextGet();
         this.#element = element;
     }
 
     appendChild(child)
     {
-        let restorePoint = createContextRestorePoint();
+        let restorePoint = Page.ContextBackup();
 
         // Restore the context captured when the ref was set
-        setNewContext(this.#context);
+        Page.ContextSet(this.#context);
             
         try
         {
@@ -231,7 +231,7 @@ export class Ref
         finally
         {
             // Remove any added contexts
-            restoreContext(restorePoint);
+            Page.ContextRestore(restorePoint);
         }
     }
 }

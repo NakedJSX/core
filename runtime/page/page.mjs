@@ -8,7 +8,7 @@ import { Ref, ServerDocument } from './document.mjs';
 
 const asyncLocalStorage = new AsyncLocalStorage();
 
-export async function runWithAsyncLocalStorage(callback)
+export async function runWithPageAsyncLocalStorage(callback)
 {
     //
     // Our simple static Page.* API is enabled by the
@@ -22,58 +22,6 @@ export async function runWithAsyncLocalStorage(callback)
             contexts: [{}]
         },
         callback);
-}
-
-/**
- * Obtain current context data provided by parent tags.
- */
-export function getContext()
-{
-    const { contexts } = asyncLocalStorage.getStore();
-    return contexts[contexts.length - 1];
-}
-
-/**
- * Add data to context made available by parent tags
- * @param {object} context
- */
-export function addContext(contextToAdd)
-{
-    const { contexts } = asyncLocalStorage.getStore();
-    contexts.push(Object.assign({}, contexts[contexts.length - 1], contextToAdd));
-}
-
-/**
- * Provide context to child tags, hide parent conact.
- * @param {object} context
- */
-export function setNewContext(context)
-{
-    const { contexts } = asyncLocalStorage.getStore();
-    contexts.push(context);
-}
-
-/**
- * Create a restore point that can be used to reset context to the current state
- * @param {object} context
- */
-export function createContextRestorePoint()
-{
-    const { contexts } = asyncLocalStorage.getStore();
-    return contexts.length;
-}
-
-/**
- * Remove all contexts added since the restore point was created
- * @param {object} context
- */
-export function restoreContext(restorePoint)
-{
-    if (restorePoint < 1)
-        return;
-    
-    const { contexts } = asyncLocalStorage.getStore();
-    asyncLocalStorage.getStore().contexts = contexts.slice(0, restorePoint);
 }
 
 export function __nakedjsx_set_document(document)
@@ -117,7 +65,7 @@ function __nakedjsx_create_element(tag, props, ...children)
         props.children = children;
 
         // Allow the tag implementation to call addContext.
-        let restorePoint = createContextRestorePoint();
+        let restorePoint = Page.ContextBackup();
         
         try
         {
@@ -126,7 +74,7 @@ function __nakedjsx_create_element(tag, props, ...children)
         finally
         {
             // Remove any added contexts
-            restoreContext(restorePoint);
+            Page.ContextRestore(restorePoint);
         }
     }
 
@@ -313,10 +261,66 @@ export const Page =
         /**
          * Create a Ref that can be passed to a JSX element to capture a reference to it.
          */
-        CreateRef()
+        RefCreate()
         {
             return new Ref();
         },
+
+        //// Page Context API
+
+        /**
+         * Obtain current context data provided by parent tags.
+         */
+        ContextGet()
+        {
+            const { contexts } = asyncLocalStorage.getStore();
+            return contexts[contexts.length - 1];
+        },
+
+        /**
+         * Add data to context made available by parent tags
+         * @param {object} context
+         */
+        ContextAdd(contextToAdd)
+        {
+            const { contexts } = asyncLocalStorage.getStore();
+            contexts.push(Object.assign({}, contexts[contexts.length - 1], contextToAdd));
+        },
+
+        /**
+         * Provide context to child tags, hiding parent contex.
+         * @param {object} context
+         */
+        ContextSet(context)
+        {
+            const { contexts } = asyncLocalStorage.getStore();
+            contexts.push(context);
+        },
+
+        /**
+         * Create a restore point that can be used to reset context to the current state
+         * @param {object} context
+         */
+        ContextBackup()
+        {
+            const { contexts } = asyncLocalStorage.getStore();
+            return contexts.length;
+        },
+
+        /**
+         * Remove all contexts added since the restore point was created
+         * @param {object} context
+         */
+        ContextRestore(restorePoint)
+        {
+            if (restorePoint < 1)
+                return;
+            
+            const { contexts } = asyncLocalStorage.getStore();
+            asyncLocalStorage.getStore().contexts = contexts.slice(0, restorePoint);
+        },
+
+        ////
 
         /**
          * Get the full path for a path relative to the output directory for this page
