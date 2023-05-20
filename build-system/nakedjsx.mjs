@@ -1629,7 +1629,7 @@ ${feebackChannels}
         const outputOptions =
             {
                 file: page.thisBuild.htmlJsFileOut,
-                sourcemap: !this.#developmentMode,
+                sourcemap: this.#developmentMode,
                 sourcemapExcludeSources: true,
                 format: 'es',
                 plugins: this.#rollupPlugins.output.server,
