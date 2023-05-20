@@ -107,7 +107,7 @@ export function __nakedjsx_create_deferred_element()
     return () => __nakedjsx_create_element(...arguments); 
 }
 
-export function __nakedjsx_create_element(tag, props, ...children)
+function __nakedjsx_create_element(tag, props, ...children)
 {
     props = props || {};
     
@@ -158,7 +158,7 @@ export function __nakedjsx_create_deferred_fragment()
     return () => __nakedjsx_create_fragment(...arguments); 
 }
 
-export function __nakedjsx_create_fragment(props)
+function __nakedjsx_create_fragment(props)
 {
     return props.children;
 }
