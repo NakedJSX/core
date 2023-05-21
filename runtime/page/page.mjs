@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { finaliseCssClasses } from '../../build-system/css.mjs';
-import { Ref, ServerDocument } from './document.mjs';
+import { ServerDocument } from './document.mjs';
 
 const interBuildCache   = new Map();
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -129,6 +129,37 @@ export function __nakedjsx_append_child(parent, child)
         parent.appendChild(document.createTextNode(child));
     else
         parent.appendChild(child);
+}
+
+class Ref
+{
+    #context;
+    #element;
+
+    set(element)
+    {
+        // Capture the current context, which we'll restore when adding children to this Ref.
+        this.#context = Page.ContextGet();
+        this.#element = element;
+    }
+
+    appendChild(child)
+    {
+        let restorePoint = Page.ContextBackup();
+
+        // Restore the context captured when the ref was set
+        Page.ContextSet(this.#context);
+            
+        try
+        {
+            this.#element.appendChild(renderNow(child));
+        }
+        finally
+        {
+            // Remove any added contexts
+            Page.ContextRestore(restorePoint);
+        }
+    }
 }
 
 export const Page =

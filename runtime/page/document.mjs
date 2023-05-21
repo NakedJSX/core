@@ -205,37 +205,6 @@ class Element
     }
 }
 
-export class Ref
-{
-    #context;
-    #element;
-
-    set(element)
-    {
-        // Capture the current context, which we'll restore when adding children to this Ref.
-        this.#context = Page.ContextGet();
-        this.#element = element;
-    }
-
-    appendChild(child)
-    {
-        let restorePoint = Page.ContextBackup();
-
-        // Restore the context captured when the ref was set
-        Page.ContextSet(this.#context);
-            
-        try
-        {
-            this.#element.appendChild(renderNow(child));
-        }
-        finally
-        {
-            // Remove any added contexts
-            Page.ContextRestore(restorePoint);
-        }
-    }
-}
-
 export class ServerDocument
 {
     constructor(lang)
