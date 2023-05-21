@@ -6,6 +6,7 @@ import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { finaliseCssClasses } from '../../build-system/css.mjs';
 import { Ref, ServerDocument } from './document.mjs';
 
+const interBuildCache   = new Map();
 const asyncLocalStorage = new AsyncLocalStorage();
 
 export async function runWithPageAsyncLocalStorage(callback)
@@ -330,6 +331,21 @@ export const Page =
         GetOutputPath(relativeOutputPath)
         {
             return path.join(getCurrentJob().page.outputDir, relativeOutputPath);
+        },
+
+        ////
+
+        CacheMapGet(name)
+        {
+            let cache = interBuildCache.get(name);
+
+            if (!cache)
+            {
+                cache = new Map();
+                interBuildCache.set(name, cache);
+            }
+
+            return cache;
         }
     };
     
