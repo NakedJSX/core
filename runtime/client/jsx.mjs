@@ -9,7 +9,10 @@ Element.prototype.appendChild =
     {
         const boundAppendChild = originalAppendChild.bind(this);
         if (Array.isArray(child))
-            child.forEach(boundAppendChild);
+            for (const childArrayMember of child)
+                this.appendChild(childArrayMember);
+        else if (typeof child === 'string')
+            boundAppendChild(document.createTextNode(child));
         else
             boundAppendChild(child);
     };
@@ -43,7 +46,7 @@ export function __nakedjsx_create_element(tag, props, ...children)
                 element.setAttribute(name, value);
         });
 
-    children.forEach((child) => __nakedjsx_append_child(element, child));
+    children.forEach((child) => element.appendChild(child));
 
     return element;
 }
@@ -51,17 +54,4 @@ export function __nakedjsx_create_element(tag, props, ...children)
 export function __nakedjsx_create_fragment(props)
 {
     return props.children;
-}
-
-export function __nakedjsx_append_child(parent, child)
-{
-    if (!child)
-        return;
-    
-    if (Array.isArray(child))
-        child.forEach((nestedChild) => __nakedjsx_append_child(parent, nestedChild));
-    else if (typeof child === 'string')
-        parent.appendChild(document.createTextNode(child));
-    else
-        parent.appendChild(child);
 }
