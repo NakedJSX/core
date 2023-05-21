@@ -763,8 +763,8 @@ ${feebackChannels}
                             
                             resolveModule("@babel/plugin-transform-react-jsx"),
                             {
-                                pragma:     forClientJs ? '__nakedjsx_create_element'  : '__nakedjsx_create_deferred_element',
-                                pragmaFrag: forClientJs ? '__nakedjsx_create_fragment' : '__nakedjsx_create_deferred_fragment'
+                                pragma:     '__nakedjsx_create_element',
+                                pragmaFrag: '__nakedjsx_create_fragment'
                             }
                         ],
 
@@ -1374,22 +1374,13 @@ ${feebackChannels}
         // for page and client.
         //
 
-        if (forClientJs)
-        {
-            injections =
-                {
-                    '__nakedjsx_create_element':  ['@nakedjsx/core/client', '__nakedjsx_create_element'],
-                    '__nakedjsx_create_fragment': ['@nakedjsx/core/client', '__nakedjsx_create_fragment']
-                };
-        }
-        else
-        {
-            injections =
-                {
-                    '__nakedjsx_create_deferred_element':   ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_element'],
-                    '__nakedjsx_create_deferred_fragment':  ['@nakedjsx/core/page',  '__nakedjsx_create_deferred_fragment']
-                };
-        }
+        const jsxImportPackage = forClientJs ? '@nakedjsx/core/client' : '@nakedjsx/core/page';
+
+        injections =
+            {
+                '__nakedjsx_create_element':  [jsxImportPackage, '__nakedjsx_create_element'],
+                '__nakedjsx_create_fragment': [jsxImportPackage, '__nakedjsx_create_fragment']
+            };
 
         const plugins =
             [

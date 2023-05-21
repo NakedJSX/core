@@ -24,14 +24,26 @@ export async function runWithPageAsyncLocalStorage(callback)
         callback);
 }
 
-export function __nakedjsx_set_document(document)
+function setDocument(document)
 {
     asyncLocalStorage.getStore().document = document;
 }
 
-export function __nakedjsx_get_document(document)
+function getDocument(document)
 {
     return asyncLocalStorage.getStore().document;
+}
+
+export function __nakedjsx_create_element()
+{
+    // Deferred so that we can reorder the execution from its depth-first default
+    return () => createElement(...arguments); 
+}
+
+export function __nakedjsx_create_fragment()
+{
+    // Deferred so that we can reorder the execution from its depth-first default
+    return () => createFragment(...arguments); 
 }
 
 export function renderNow(deferredRender)
@@ -50,12 +62,7 @@ export function renderNow(deferredRender)
     return deferredRender;
 }
 
-export function __nakedjsx_create_deferred_element()
-{
-    return () => __nakedjsx_create_element(...arguments); 
-}
-
-function __nakedjsx_create_element(tag, props, ...children)
+function createElement(tag, props, ...children)
 {
     props = props || {};
     
@@ -101,12 +108,7 @@ function __nakedjsx_create_element(tag, props, ...children)
     return element;
 }
 
-export function __nakedjsx_create_deferred_fragment()
-{
-    return () => __nakedjsx_create_fragment(...arguments); 
-}
-
-function __nakedjsx_create_fragment(props)
+function createFragment(props)
 {
     return props.children;
 }
@@ -136,7 +138,7 @@ export const Page =
          */
         Create(lang)
         {
-            __nakedjsx_set_document(new ServerDocument(lang));
+            setDocument(new ServerDocument(lang));
         },
 
         /**
@@ -159,7 +161,7 @@ export const Page =
             {
                 // Equivalent to this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
                 this.AppendHead(
-                    __nakedjsx_create_element(
+                    createElement(
                         'script',
                         {
                             src: page.thisBuild.clientJsFileOut,
@@ -174,13 +176,13 @@ export const Page =
             //
 
             // Equivalent to this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
-            const finalCss = finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet);
+            const finalCss = finaliseCssClasses(getDocument(), commonCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
-                    __nakedjsx_create_element(
+                    createElement(
                         'style',
                         null,
-                        __nakedjsx_create_element(
+                        createElement(
                             'raw-content',
                             {
                                 content: finalCss
@@ -192,10 +194,10 @@ export const Page =
             {
                 // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
                 this.AppendBody(
-                    __nakedjsx_create_element(
+                    createElement(
                         'script',
                         null,
-                        __nakedjsx_create_element(
+                        createElement(
                             'raw-content',
                             {
                                 content: js
@@ -226,9 +228,9 @@ export const Page =
             // Render the document to HTML and pass result back to the build thread.
             //
 
-            onRendered(__nakedjsx_get_document().toHtml({ relativeAssetRoot }));
+            onRendered(getDocument().toHtml({ relativeAssetRoot }));
 
-            __nakedjsx_set_document(null);
+            setDocument(null);
         },
 
         /**
@@ -237,7 +239,7 @@ export const Page =
          */
         AppendHead(child)
         {
-            __nakedjsx_append_child(__nakedjsx_get_document().head, child);
+            __nakedjsx_append_child(getDocument().head, child);
         },
 
         /**
@@ -255,7 +257,7 @@ export const Page =
          */
         AppendBody(child)
         {
-            __nakedjsx_append_child(__nakedjsx_get_document().body, child);
+            __nakedjsx_append_child(getDocument().body, child);
         },
 
         /**
