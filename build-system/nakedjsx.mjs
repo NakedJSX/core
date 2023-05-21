@@ -1628,7 +1628,18 @@ ${feebackChannels}
                 }
             };
 
-        const bundle = await rollup(inputOptions);
+        let bundle;
+        try
+        {
+            bundle = await rollup(inputOptions);
+        }
+        catch(error)
+        {
+            err(`Page compilation error in page ${page.uriPath}`);
+            err(error);
+            builder.#onPageBuildComplete(page, true);
+            return;
+        }
 
         //
         // Also watch the HTML JS imports for changes.
