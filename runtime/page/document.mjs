@@ -1,5 +1,3 @@
-import { Page, renderNow } from "./page.mjs";
-
 export const assetUriPathPlaceholder = '__NAKEDJSX_ASSET_DIR__';
 
 // These elements are self closing (i.e. <hr>, not <hr/>)
@@ -38,17 +36,22 @@ function empty(s)
 class Element
 {
     #tagName;
+    #context;
     #id;
     #attributes;
     #children;
-    #jsxDocument;
 
-    constructor(document, tagName)
+    constructor(tagName, context)
     {
-        this.#jsxDocument   = document;
         this.#tagName       = tagName ? tagName.toLowerCase() : undefined;
+        this.#context       = context;
         this.#children      = [];
         this.#attributes    = {};
+    }
+
+    get context()
+    {
+        return this.#context;
     }
 
     get id()
@@ -76,6 +79,9 @@ class Element
 
     setAttribute(key, value)
     {
+        if (key === 'context')
+            return; // already set at construction
+
         // If the value is empty, strip the attribute
         if (empty(value))
             return;
@@ -107,7 +113,9 @@ class Element
 
         if (Array.isArray(child))
         {
-            child.flat().forEach(this.appendChild);
+            for (const nestedChild of child.flat())
+                this.appendChild(nestedChild);
+            
             return child;
         }
 
@@ -115,7 +123,7 @@ class Element
         {
             case 'object':
                 if (child.constructor.name === 'Element')
-                    this.#children.push(child);        
+                    this.#children.push(child);
                 break;
 
             case 'string':
@@ -209,25 +217,16 @@ export class ServerDocument
 {
     constructor(lang)
     {
-        this.documentElement = new Element(this, "html");
+        this.documentElement = new Element("html");
         this.documentElement.setAttribute("lang", lang);
 
-        this.head = this.documentElement.appendChild(new Element(this, "head"));
-        this.body = this.documentElement.appendChild(new Element(this, "body"));
+        this.head = this.documentElement.appendChild(new Element("head"));
+        this.body = this.documentElement.appendChild(new Element("body"));
     }
 
-    createElement(tagName)
+    createElement(tagName, context)
     {
-        return new Element(this, tagName);
-    }
-
-    createTextNode(text)
-    {
-        //
-        // This function exists only for compatibility with browser DOM API
-        //
-
-        return text;
+        return new Element(tagName, context);
     }
 
     toHtml(renderContext)

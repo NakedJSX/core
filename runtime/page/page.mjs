@@ -35,55 +35,112 @@ function getDocument(document)
     return asyncLocalStorage.getStore().document;
 }
 
-export function __nakedjsx_create_element()
+class DeferredElement
 {
-    // Deferred so that we can reorder the execution from its depth-first default
-    return () => createElement(...arguments); 
+    context;
+    impl;
+
+    constructor(context, impl)
+    {
+        this.context    = context;
+        this.impl       = impl;
+    }
 }
 
-export function __nakedjsx_create_fragment()
+export function __nakedjsx_create_fragment(props)
 {
-    // Deferred so that we can reorder the execution from its depth-first default
-    return () => createFragment(...arguments); 
+    return props.children;
 }
 
-export function renderNow(deferredRender)
+export function __nakedjsx_create_element(tag, props, ...children)
 {
-    const { document } = asyncLocalStorage.getStore();
+    if (children)
+        children =
+            children
+                //
+                // When JSX children are placed like <parent>{children}<child></parent>
+                // We end up with [[...chidren],child] which we need to flatten.
+                //
+                .flat()
+                // <p>{false && ...}<\/p> will result in an undefined child
+                .filter(child => child !== undefined);
 
-    if (typeof deferredRender === 'function')
-        return renderNow(deferredRender());
+    if (tag === __nakedjsx_create_fragment)
+        return children;
 
-    if (typeof deferredRender === 'string')
-        return document.createTextNode(deferredRender);
+    //
+    // Each element has a magical context prop that proxies
+    // context data from parent elements (when attached).
+    //
+    // For this to be useful, parents JSX tags need to execute
+    // before child tags - otherwise it would be too late
+    // to provide context data to the child.
+    //
+    // The natural order of execution is depth first, so
+    // we jump through a few hoops to change that.
+    //
+
+    let parent;
+
+    function _setParent(newParent)
+    {
+        parent = newParent;
+    }
+
+    const context =
+        new Proxy(
+            new Map([['tag', tag.name ?? tag]]),
+            {
+                set(target, property, value)
+                {
+                    if (property.startsWith('_'))
+                        throw Error('Cannot set context properties with keys starting with _');
+
+                    target.set(property, value);
+
+                    return true;
+                },
+
+                get(target, property)
+                {
+                    if (property === _setParent.name)
+                        return _setParent.bind(null);
+
+                    if (target.has(property))
+                        return target.get(property);
+                    
+                    if (parent)
+                        return parent[property];
+
+                    return undefined;
+                }
+            });
     
-    if (Array.isArray(deferredRender))
-        return deferredRender.map(deferredRender => renderNow(deferredRender));
+    props = props ?? {};
+
+    if (props.context)
+        throw Error('Cannot manually set context prop');
     
-    return deferredRender;
+    props.context = context;
+
+    if (children)
+        for (const child of children)
+            if (child instanceof DeferredElement)
+                child.context._setParent(context);
+    
+    return new DeferredElement(context, createElement.bind(null, tag, props, children));
 }
 
-function createElement(tag, props, ...children)
+function createElement(tag, props, children)
 {
-    props = props || {};
-    
     if (typeof tag === "function")
     {
         // Make child elements selectively placeable via {props.children}
         props.children = children;
 
-        // Allow the tag implementation to call addContext.
-        let restorePoint = Page.ContextBackup();
-        
-        try
-        {
-            return renderNow(tag(props, children));
-        }
-        finally
-        {
-            // Remove any added contexts
-            Page.ContextRestore(restorePoint);
-        }
+        const deferredRender = tag(props);
+        connectContexts(props.context, deferredRender);
+        return renderNow(deferredRender);
     }
 
     //
@@ -91,7 +148,7 @@ function createElement(tag, props, ...children)
     //
 
     const { document }  = asyncLocalStorage.getStore();
-    const element       = document.createElement(tag);
+    const element       = document.createElement(tag, props.context);
 
     Object.entries(props).forEach(
         ([name, value]) =>
@@ -104,61 +161,60 @@ function createElement(tag, props, ...children)
                 element.setAttribute(name, value);
         });
 
-    children.forEach((child) => __nakedjsx_append_child(element, child));
+    children.forEach((child) => element.appendChild(renderNow(child)));
 
     return element;
 }
 
-function createFragment(props)
+function connectContexts(parentContext, deferredRender)
 {
-    return props.children;
+    if (Array.isArray(deferredRender))
+    {
+        deferredRender.forEach(connectContexts.bind(null, parentContext));
+        return;
+    }
+    else if (deferredRender instanceof DeferredElement)
+    {
+        if (deferredRender.context) // can be null if Page.RenderJsx is used
+            deferredRender.context._setParent(parentContext);
+
+        return;
+    }
 }
 
-export function __nakedjsx_append_child(parent, child)
+function renderNow(deferredRender)
 {
-    if (!child)
-        return;
-
-    child = renderNow(child);
-
-    const { document } = asyncLocalStorage.getStore();
-    
-    if (Array.isArray(child))
-        child.forEach((nestedChild) => __nakedjsx_append_child(parent, nestedChild));
-    else if (typeof child === 'string')
-        parent.appendChild(document.createTextNode(child));
+    if (Array.isArray(deferredRender))
+        return deferredRender.flat().map(renderNow);
+    else if (deferredRender instanceof DeferredElement)
+        return deferredRender.impl();
+    else if (typeof deferredRender === 'string')
+        return deferredRender;
+    else if (deferredRender === undefined)
+        return undefined;
     else
-        parent.appendChild(child);
+        throw Error('Unexpected type passed to renderNow: ' + typeof deferredRender);
 }
 
 class Ref
 {
-    #context;
     #element;
 
     set(element)
     {
-        // Capture the current context, which we'll restore when adding children to this Ref.
-        this.#context = Page.ContextGet();
         this.#element = element;
     }
 
-    appendChild(child)
+    appendJsx(jsx)
     {
-        let restorePoint = Page.ContextBackup();
+        //
+        // Set the parent context of jsx to the referenced element,
+        // then render the jsx and append the result.
+        //
 
-        // Restore the context captured when the ref was set
-        Page.ContextSet(this.#context);
-            
-        try
-        {
-            this.#element.appendChild(renderNow(child));
-        }
-        finally
-        {
-            // Remove any added contexts
-            Page.ContextRestore(restorePoint);
-        }
+        connectContexts(this.#element.context, jsx);
+        const rendered = renderNow(jsx);
+        this.#element.appendChild(rendered);
     }
 }
 
@@ -193,7 +249,7 @@ export const Page =
             {
                 // Equivalent to this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
                 this.AppendHead(
-                    createElement(
+                    __nakedjsx_create_element(
                         'script',
                         {
                             src: page.thisBuild.clientJsFileOut,
@@ -211,10 +267,10 @@ export const Page =
             const finalCss = finaliseCssClasses(getDocument(), commonCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
-                    createElement(
+                    __nakedjsx_create_element(
                         'style',
                         null,
-                        createElement(
+                        __nakedjsx_create_element(
                             'raw-content',
                             {
                                 content: finalCss
@@ -226,10 +282,10 @@ export const Page =
             {
                 // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
                 this.AppendBody(
-                    createElement(
+                    __nakedjsx_create_element(
                         'script',
                         null,
-                        createElement(
+                        __nakedjsx_create_element(
                             'raw-content',
                             {
                                 content: js
@@ -271,7 +327,7 @@ export const Page =
          */
         AppendHead(child)
         {
-            __nakedjsx_append_child(getDocument().head, child);
+            getDocument().head.appendChild(renderNow(child));
         },
 
         /**
@@ -289,7 +345,20 @@ export const Page =
          */
         AppendBody(child)
         {
-            __nakedjsx_append_child(getDocument().body, child);
+            getDocument().body.appendChild(renderNow(child));
+        },
+
+        /**
+         * Render JSX immediately - useful for parents that want children to pass data to them via context.
+         * 
+         * Normally, parents are rendered before their children.
+         * 
+         * @param {*} jsx - JSX element, or array of, to be rendered
+         */
+        RenderJsx(jsx)
+        {
+            const rendered = renderNow(jsx);
+            return new DeferredElement(null, () => rendered);
         },
 
         /**
@@ -298,60 +367,6 @@ export const Page =
         RefCreate()
         {
             return new Ref();
-        },
-
-        //// Page Context API
-
-        /**
-         * Obtain current context data provided by parent tags.
-         */
-        ContextGet()
-        {
-            const { contexts } = asyncLocalStorage.getStore();
-            return contexts[contexts.length - 1];
-        },
-
-        /**
-         * Add data to context made available by parent tags
-         * @param {object} context
-         */
-        ContextAdd(contextToAdd)
-        {
-            const { contexts } = asyncLocalStorage.getStore();
-            contexts.push(Object.assign({}, contexts[contexts.length - 1], contextToAdd));
-        },
-
-        /**
-         * Provide context to child tags, hiding parent contex.
-         * @param {object} context
-         */
-        ContextSet(context)
-        {
-            const { contexts } = asyncLocalStorage.getStore();
-            contexts.push(context);
-        },
-
-        /**
-         * Create a restore point that can be used to reset context to the current state
-         * @param {object} context
-         */
-        ContextBackup()
-        {
-            const { contexts } = asyncLocalStorage.getStore();
-            return contexts.length;
-        },
-
-        /**
-         * Remove all contexts added since the restore point was created
-         * @param {object} context
-         */
-        ContextRestore(restorePoint)
-        {
-            if (restorePoint < 1)
-                return;
-            
-            const { contexts } = asyncLocalStorage.getStore();
-            asyncLocalStorage.getStore().contexts = contexts.slice(0, restorePoint);
         },
 
         ////
@@ -366,6 +381,10 @@ export const Page =
 
         ////
 
+        /**
+         * Object a named Map that persists between builds, useful for tag content caching.
+         * @param {*} name 
+         */
         CacheMapGet(name)
         {
             let cache = interBuildCache.get(name);
