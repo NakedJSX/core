@@ -45,11 +45,11 @@ export default function(babel, options)
                 {
                     const callee = nodePath.node.callee;
 
-                    if (callee.type !== 'Identifier' || callee.name !== '__nakedjsx_create_element')
+                    if (callee.type !== 'Identifier' || callee.name !== '__nakedjsx__createElement')
                         return;
 
                     //
-                    // It's a call to __nakedjsx_create_element(tagName, props, ...children).
+                    // It's a call to __nakedjsx__createElement(tagName, props, ...children).
                     // Do the props contain "css": ... ?
                     //
 

@@ -37,11 +37,11 @@ const resolveModule = createRequire(import.meta.url).resolve;
 // Due to the async nature of the build process we use AsyncLocalStorage.
 //
 
-const currentJobs = new AsyncLocalStorage();
+const currentJob = new AsyncLocalStorage();
 
 export function getCurrentJob()
 {
-    return currentJobs.getStore()
+    return currentJob.getStore();
 }
 
 export const configFilename = '.nakedjsx.json';
@@ -763,8 +763,8 @@ ${feebackChannels}
                             
                             resolveModule("@babel/plugin-transform-react-jsx"),
                             {
-                                pragma:     '__nakedjsx_create_element',
-                                pragmaFrag: '__nakedjsx_create_fragment'
+                                pragma:     '__nakedjsx__createElement',
+                                pragmaFrag: '__nakedjsx__createFragment'
                             }
                         ],
 
@@ -1378,8 +1378,8 @@ ${feebackChannels}
 
         injections =
             {
-                '__nakedjsx_create_element':  [jsxImportPackage, '__nakedjsx_create_element'],
-                '__nakedjsx_create_fragment': [jsxImportPackage, '__nakedjsx_create_fragment']
+                '__nakedjsx__createElement':  [jsxImportPackage, '__nakedjsx__createElement'],
+                '__nakedjsx__createFragment': [jsxImportPackage, '__nakedjsx__createFragment']
             };
 
         const plugins =
@@ -1673,7 +1673,7 @@ ${feebackChannels}
 
         try
         {
-            await currentJobs
+            await currentJob
                 .run(
                     {
                         developmentMode:    this.#developmentMode,

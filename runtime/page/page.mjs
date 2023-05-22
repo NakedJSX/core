@@ -49,12 +49,14 @@ class DeferredElement
     }
 }
 
-export function __nakedjsx_create_fragment(props)
+/** Injected by the JSX compiler as needed */
+export function __nakedjsx__createFragment(props)
 {
     return props.children;
 }
 
-export function __nakedjsx_create_element(tag, props, ...children)
+/** Injected by the JSX compiler as needed */
+export function __nakedjsx__createElement(tag, props, ...children)
 {
     if (children)
         children =
@@ -67,7 +69,7 @@ export function __nakedjsx_create_element(tag, props, ...children)
                 // <p>{false && ...}<\/p> will result in an undefined child
                 .filter(child => child !== undefined);
 
-    if (tag === __nakedjsx_create_fragment)
+    if (tag === __nakedjsx__createFragment)
         return children;
 
     //
@@ -269,7 +271,7 @@ export const Page =
             {
                 // Equivalent to this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
                 this.AppendHead(
-                    __nakedjsx_create_element(
+                    __nakedjsx__createElement(
                         'script',
                         {
                             src: page.thisBuild.clientJsFileOut,
@@ -287,10 +289,10 @@ export const Page =
             const finalCss = finaliseCssClasses(getDocument(), commonCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
-                    __nakedjsx_create_element(
+                    __nakedjsx__createElement(
                         'style',
                         null,
-                        __nakedjsx_create_element(
+                        __nakedjsx__createElement(
                             'raw-content',
                             {
                                 content: finalCss
@@ -302,10 +304,10 @@ export const Page =
             {
                 // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
                 this.AppendBody(
-                    __nakedjsx_create_element(
+                    __nakedjsx__createElement(
                         'script',
                         null,
-                        __nakedjsx_create_element(
+                        __nakedjsx__createElement(
                             'raw-content',
                             {
                                 content: js

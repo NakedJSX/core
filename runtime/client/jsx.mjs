@@ -17,7 +17,7 @@ Element.prototype.appendChild =
             boundAppendChild(child);
     };
 
-export function __nakedjsx_create_element(tag, props, ...children)
+export function __nakedjsx__createElement(tag, props, ...children)
 {
     props = props || {};
     
@@ -51,7 +51,7 @@ export function __nakedjsx_create_element(tag, props, ...children)
     return element;
 }
 
-export function __nakedjsx_create_fragment(props)
+export function __nakedjsx__createFragment(props)
 {
     return props.children;
 }
