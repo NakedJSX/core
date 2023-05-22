@@ -176,7 +176,7 @@ function connectContexts(parentContext, deferredRender)
     }
     else if (deferredRender instanceof DeferredElement)
     {
-        if (deferredRender.context) // can be null if Page.RenderJsx is used
+        if (deferredRender.context) // can be null if Page.EvaluateNow is used
             deferredRender.context._setParent(parentContext);
 
         return;
@@ -368,13 +368,13 @@ export const Page =
         },
 
         /**
-         * Render JSX immediately - useful for parents that want children to pass data up to them via context.
+         * EvaluateNow JSX immediately - useful for parents that want children to pass data up to them via context.
          * 
-         * Normally, parents are rendered before their children.
+         * Normally, parents are evaluated before their children.
          * 
          * @param {*} jsx - JSX element, or array of, to be rendered
          */
-        RenderJsx(jsx)
+        EvaluateNow(jsx)
         {
             const rendered = renderNow(jsx);
             return new DeferredElement(null, () => rendered);
