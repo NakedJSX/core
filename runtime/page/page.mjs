@@ -93,7 +93,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
 
     const context =
         new Proxy(
-            new Map([['tag', tag.name ?? tag]]),
+            new Map(),
             {
                 set(target, property, value)
                 {
@@ -121,9 +121,6 @@ export function __nakedjsx__createElement(tag, props, ...children)
             });
     
     props = props ?? {};
-
-    if (props.context)
-        throw Error('Cannot manually set context prop');
     
     props.context = context;
 
@@ -194,7 +191,7 @@ function renderNow(deferredRender)
         return deferredRender.impl();
     else if (typeof deferredRender === 'string')
         return deferredRender;
-    else if (deferredRender === undefined)
+    else if (deferredRender === undefined || deferredRender === false)
         return undefined;
     else
         throw Error('Unexpected type passed to renderNow: ' + typeof deferredRender);
