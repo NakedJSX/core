@@ -249,6 +249,54 @@ export const Page =
         },
 
         /**
+         * Append JSX to the head tag.
+         * @param {*} child - JSX to be appended to the head tag.
+         */
+        AppendHead(child)
+        {
+            getDocument().head.appendChild(renderNow(child));
+        },
+
+        /**
+         * Append CSS to the common CSS placed before extracted scoped CSS.
+         * @param {*} css - CSS to be added.
+         */
+        AppendCss(css)
+        {
+            getCurrentJob().commonCss += css;
+        },
+
+        /**
+         * Append JSX to the body tag.
+         * @param {*} child - JSX to be appended to the body tag.
+         */
+        AppendBody(child)
+        {
+            getDocument().body.appendChild(renderNow(child));
+        },
+
+        /**
+         * EvaluateNow JSX immediately - useful for parents that want children to pass data up to them via context.
+         * 
+         * Normally, parents are evaluated before their children.
+         * 
+         * @param {*} jsx - JSX element, or array of, to be rendered
+         */
+        EvaluateNow(jsx)
+        {
+            const rendered = renderNow(jsx);
+            return new DeferredElement(null, () => rendered);
+        },
+
+        /**
+         * Create a Ref that can be passed to a JSX element to capture a reference to it.
+         */
+        RefCreate()
+        {
+            return new Ref();
+        },
+
+        /**
          * Render the HTML page and pass it back to the build process.
          * @param {string} [outputFilename] - Override the default name of the generated html file
          */
@@ -338,54 +386,6 @@ export const Page =
             onRendered(getDocument().toHtml({ relativeAssetRoot }));
 
             setDocument(null);
-        },
-
-        /**
-         * Append JSX to the head tag.
-         * @param {*} child - JSX to be appended to the head tag.
-         */
-        AppendHead(child)
-        {
-            getDocument().head.appendChild(renderNow(child));
-        },
-
-        /**
-         * Append CSS to the common CSS placed before extracted scoped CSS.
-         * @param {*} css - CSS to be added.
-         */
-        AppendCss(css)
-        {
-            getCurrentJob().commonCss += css;
-        },
-
-        /**
-         * Append JSX to the body tag.
-         * @param {*} child - JSX to be appended to the body tag.
-         */
-        AppendBody(child)
-        {
-            getDocument().body.appendChild(renderNow(child));
-        },
-
-        /**
-         * EvaluateNow JSX immediately - useful for parents that want children to pass data up to them via context.
-         * 
-         * Normally, parents are evaluated before their children.
-         * 
-         * @param {*} jsx - JSX element, or array of, to be rendered
-         */
-        EvaluateNow(jsx)
-        {
-            const rendered = renderNow(jsx);
-            return new DeferredElement(null, () => rendered);
-        },
-
-        /**
-         * Create a Ref that can be passed to a JSX element to capture a reference to it.
-         */
-        RefCreate()
-        {
-            return new Ref();
         },
 
         ////
