@@ -19,9 +19,11 @@ export async function runWithPageAsyncLocalStorage(callback)
     //
 
     await asyncLocalStorage.run(
-        {
-            contexts: [{}]
-        },
+        Object.preventExtensions(
+            {
+                document:   null,
+                refs:       new Map()
+            }),
         callback);
 }
 
@@ -196,13 +198,29 @@ function renderNow(deferredRender)
         throw Error('Unexpected type passed to renderNow: ' + typeof deferredRender);
 }
 
+/**
+ * Async Ref class allowing refs to be safely shared by multiple async scopes.
+ */
 class Ref
 {
-    #element;
+    constructor()
+    {
+        //
+        // Each async context gets a unique 'this' key in the refs map,
+        // allowing a single instance of ref to be used by multiple
+        // async contexts.
+        //
+
+        const { refs } = asyncLocalStorage.getStore();
+
+        refs.set(this, {});
+    }
 
     set(element)
     {
-        this.#element = element;
+        const { refs } = asyncLocalStorage.getStore();
+        
+        refs.get(this).element = element;
     }
 
     appendJsx(jsx)
@@ -212,9 +230,11 @@ class Ref
         // then render the jsx and append the result.
         //
 
-        connectContexts(this.#element.context, jsx);
+        const { element } = asyncLocalStorage.getStore().refs.get(this);
+
+        connectContexts(element.context, jsx);
         const rendered = renderNow(jsx);
-        this.#element.appendChild(rendered);
+        element.appendChild(rendered);
     }
 }
 
@@ -349,7 +369,7 @@ export const Page =
         },
 
         /**
-         * Render JSX immediately - useful for parents that want children to pass data to them via context.
+         * Render JSX immediately - useful for parents that want children to pass data up to them via context.
          * 
          * Normally, parents are rendered before their children.
          * 
