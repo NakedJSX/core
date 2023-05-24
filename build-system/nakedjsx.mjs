@@ -6,7 +6,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process'
 
 import chokidar from 'chokidar';
 import { minify } from 'terser';
@@ -291,7 +290,7 @@ export class NakedJSX
         //     feebackChannels += `\nShow HN: TODO - post on HN and put URL here`;
 
         log.setPrompt(
-`Thank you for trying this NakedJSX prerelease!
+`Thank you for trying NakedJSX prerelease version ${packageInfo.version}!
 
 NOTE: Things subject to change until version 1.0.0,
       breaking changes linked to Y increments in 0.Y.Z.
@@ -302,14 +301,15 @@ NOTE: Things subject to change until version 1.0.0,
 
 Roadmap to 1.0.0:
 
-- Async JSX tags
-- Client JSX refs to DOM nodes
+- TypeScript
+- Async JSX tags?
+- Client JSX refs to DOM nodes?
 - Ability for HTML JS to make refs available to client JS?
 - Ability to configure default options for plugins
 - Tests
 - Incorporate feedback
 
-Any feedback would be appreciated:
+All feedback is appreciated:
 
 ${feebackChannels}
 `
@@ -318,8 +318,6 @@ ${feebackChannels}
 
     exit()
     {
-        // wtf, there doesn't seem to be a close feature in the node http server.
-
         this.#config.quiet || this.#logFinalThoughts();
 
         process.exit(0);
@@ -688,6 +686,7 @@ ${feebackChannels}
         page.thisBuild =
             {
                 inlineJs:       [],
+                keyedInlineJs:  new Map(),
                 scopedCssSet:   new ScopedCssSet()
             };
 

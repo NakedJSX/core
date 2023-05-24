@@ -267,6 +267,33 @@ export const Page =
         },
 
         /**
+         * Append JavaScript code to the page, optionally replacing any previously appended JavaScript with the same key.
+         * @param {*} js - JavaScript code to be added.
+         * @param {Symbol} key - If supplied, js will replace any previous JavaScript with the same key
+         */
+        AppendJs(js, key)
+        {
+            if (key)
+            {
+                if (typeof key !== 'symbol')
+                    throw Error('AppendJs key must be a Symbol. You can create one with Symbol()');
+
+                getCurrentJob().page.thisBuild.keyedInlineJs.set(key, js);
+            }
+            else
+                getCurrentJob().page.thisBuild.inlineJs.push(js);
+        },
+
+        /**
+         * Determine whether JavaScript with supplied key has been previously appended.
+         * @param {Symbol} key - JavaScript key
+         */
+        HasJs(key)
+        {
+            return getCurrentJob().page.thisBuild.keyedInlineJs.has(key);
+        },
+
+        /**
          * Append JSX to the body tag.
          * @param {*} child - JSX to be appended to the body tag.
          */
@@ -345,7 +372,12 @@ export const Page =
                         )
                     );
 
-            for (const js of page.thisBuild.inlineJs)
+            //
+            // Inject all necessary inline JS in a single script tag.
+            //
+
+            let js = page.thisBuild.inlineJs.join(';\n') + ';\n' + [...page.thisBuild.keyedInlineJs.values()].join(';\n');
+            if (js !== ';')
             {
                 // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
                 this.AppendBody(
