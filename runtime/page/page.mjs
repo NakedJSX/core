@@ -294,7 +294,7 @@ export const Page =
 
         /**
          * If it hasn't been added already, add JavaScript code to the page.
-         * @param {string} js - JavaScript code to be added.
+         * @param {function|string} js - JavaScript code to be added.
          * @param {object} [options] - Alter behavior of AppendJs()
          * @param {object} [options.allowDuplicate] - Set to true to allow adding code that's been added before on this page
          */
