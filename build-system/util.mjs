@@ -102,6 +102,11 @@ export function isExternalImport(id)
     return id.includes('/node_modules/') || id.includes('/.yarn/');
 }
 
+export function convertToAlphaNum(value, digitSymbols)
+{
+    return convertToBase(value, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+}
+
 export function convertToBase(value, digitSymbols)
 {
     //

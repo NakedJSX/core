@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { finaliseCssClasses } from '../../build-system/css.mjs';
 import { ServerDocument } from './document.mjs';
+import { convertToAlphaNum } from '../../build-system/util.mjs';
 
 const interBuildCache   = new Map();
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -237,8 +238,24 @@ class Ref
     }
 }
 
+/**
+ * A callback that is passed the current page configuration.
+ * @callback ConfigureCallback
+ * @param {object} config
+ */
+
 export const Page =
     {
+        /**
+         * Alter the default config object for pages generated in this file.
+         * Can be called between pages if needed.
+         * @param {ConfigureCallback} callback - Called with the current config object for possible alteration.
+         */
+        Config(callback)
+        {
+            callback(getCurrentJob().page.thisBuild.config);
+        },
+
         /**
          * Begin construction of a HTML document.
          * @param {string} lang - Will be placed in the 'lang' attribute of the html tag.
@@ -267,39 +284,56 @@ export const Page =
         },
 
         /**
-         * Append JavaScript code to the page, optionally replacing any previously appended JavaScript with the same key.
-         * @param {*} js - JavaScript code to be added.
-         * @param {Symbol} key - If supplied, js will replace any previous JavaScript with the same key
-         */
-        AppendJs(js, key)
-        {
-            if (key)
-            {
-                if (typeof key !== 'symbol')
-                    throw Error('AppendJs key must be a Symbol. You can create one with Symbol()');
-
-                getCurrentJob().page.thisBuild.keyedInlineJs.set(key, js);
-            }
-            else
-                getCurrentJob().page.thisBuild.inlineJs.push(js);
-        },
-
-        /**
-         * Determine whether JavaScript with supplied key has been previously appended.
-         * @param {Symbol} key - JavaScript key
-         */
-        HasJs(key)
-        {
-            return getCurrentJob().page.thisBuild.keyedInlineJs.has(key);
-        },
-
-        /**
          * Append JSX to the body tag.
          * @param {*} child - JSX to be appended to the body tag.
          */
         AppendBody(child)
         {
             getDocument().body.appendChild(renderNow(child));
+        },
+
+        /**
+         * If it hasn't been added already, add JavaScript code to the page.
+         * @param {string} js - JavaScript code to be added.
+         * @param {object} [options] - Alter behavior of AppendJs()
+         * @param {object} [options.allowDuplicate] - Set to true to allow adding code that's been added before on this page
+         */
+        AppendJs(js, { allowDuplicate } = {})
+        {
+            // convert function objects to string
+            const jsString = `${js}`;
+
+            const { thisBuild } = getCurrentJob().page;
+
+            if (thisBuild.inlineJsSet.has(jsString))
+            {
+                //
+                // We've already added this JS to the page
+                // but add it anyway if duplicates are allowed.
+                //
+
+                if (allowDuplicate)
+                    thisBuild.inlineJs.push(jsString);
+            }
+            else
+            {
+                //
+                // Remember that we have added this JS, then add it.
+                //
+
+                thisBuild.inlineJsSet.add(jsString);
+                thisBuild.inlineJs.push(jsString);
+            }
+        },
+
+        /**
+         * Allocate an id unique to the page
+         */
+        UniqueId()
+        {
+            const { thisBuild } = getCurrentJob().page;
+
+            return '__nakedjsx__' + convertToAlphaNum(thisBuild.nextUniqueId++);
         },
 
         /**
@@ -335,23 +369,10 @@ export const Page =
             // Let the build system know that this page is fully configured.
             // At this point we can expect any client JS to be compiled.
             //
-
             // NOTHING ASYNC CAN BE SAFELY INVOKED BEFORE onRenderStart()
-            await onRenderStart(outputFilename ?? page.htmlFile);
+            //
 
-            if (page.thisBuild.clientJsFileOut)
-            {
-                // Equivalent to this.AppendHead(<script src={page.thisBuild.clientJsFileOut} async defer></script>);
-                this.AppendHead(
-                    __nakedjsx__createElement(
-                        'script',
-                        {
-                            src: page.thisBuild.clientJsFileOut,
-                            async: true,
-                            defer: true
-                        })
-                    );
-            }   
+            await onRenderStart(outputFilename ?? page.htmlFile);
 
             //
             // We have our page structure, it's now time to process CSS attributes
@@ -373,13 +394,26 @@ export const Page =
                     );
 
             //
-            // Inject all necessary inline JS in a single script tag.
+            // Generate <script> tags for javascript
             //
 
-            let js = page.thisBuild.inlineJs.join(';\n') + ';\n' + [...page.thisBuild.keyedInlineJs.values()].join(';\n');
-            if (js !== ';')
+            for (const src of page.thisBuild.output.fileJs)
             {
-                // this.AppendBody(<script><raw-content content={js}></raw-content></script>);
+                // Equivalent to this.AppendHead(<script src={src} async defer></script>);
+                this.AppendHead(
+                    __nakedjsx__createElement(
+                        'script',
+                        {
+                            src,
+                            async: true,
+                            defer: true
+                        })
+                    );
+            }
+
+            for (const content of page.thisBuild.output.inlineJs)
+            {
+                // Equivalent to this.AppendBody(<script><raw-content content={content} /></script>);
                 this.AppendBody(
                     __nakedjsx__createElement(
                         'script',
@@ -387,7 +421,7 @@ export const Page =
                         __nakedjsx__createElement(
                             'raw-content',
                             {
-                                content: js
+                                content
                             })
                         )
                     );
@@ -401,7 +435,7 @@ export const Page =
             const fullOutputPath =
                 path.normalize(
                     path.join(
-                        page.outputDir,
+                        page.outputRoot,
                         outputFilename ?? page.htmlFile
                         )
                 );

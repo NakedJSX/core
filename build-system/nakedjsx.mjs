@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import inspector from 'node:inspector'
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
@@ -65,6 +66,10 @@ export class NakedJSX
     #dstDir;
     #dstAssetDir;
 
+    #tmpRoot;
+    #tmpDir;
+    #tmpDirVersion          = -1;
+
     #commonCssFile;
     #commonCss;
 
@@ -72,8 +77,6 @@ export class NakedJSX
 
     #pathAliases            = {};
     #definitions            = {};
-
-    #htmlJsFileOutVersions  = new Map();
 
     #started                = false;
     #initialising           = true;
@@ -86,6 +89,7 @@ export class NakedJSX
 
     #watcher;
     #watchFiles             = new Map(); // filename -> Set<page>
+    #watchFilesIgnore;
 
     #rollupPlugins;
 
@@ -186,7 +190,8 @@ export class NakedJSX
             fs.mkdirSync(this.#dstDir, { recursive: true });
         }
         
-        this.#dstAssetDir = path.join(this.#dstDir, 'asset');
+        this.#dstAssetDir   = path.join(this.#dstDir, 'asset');
+        this.#tmpRoot       = path.join(this.#dstDir, '.__nakedjsx__tmp');
 
         //
         // Process path aliases
@@ -302,12 +307,13 @@ NOTE: Things subject to change until version 1.0.0,
 Roadmap to 1.0.0:
 
 - TypeScript
-- Async JSX tags?
-- Client JSX refs to DOM nodes?
-- Ability for HTML JS to make refs available to client JS?
 - Ability to configure default options for plugins
 - Tests
 - Incorporate feedback
+- ? Async JSX tags
+- ? Client JSX refs to DOM nodes
+- ? Ability for HTML JS to make refs available to client JS
+- ? Deno / dpx
 
 All feedback is appreciated:
 
@@ -527,15 +533,15 @@ ${feebackChannels}
             const type      = match[2];
             const ext       = match[3];
 
-            if (type === 'config' && ext !== 'mjs' && ext !== 'js')
-                throw Error(`Page config ${filename} should have .mjs or .js extension`);
+            if (type === 'config' && ext !== 'mjs')
+                throw Error(`Page config ${filename} must have .mjs extension`);
             
             return  {
                         type,
                         page:
                             {
                                 uriPath,
-                                htmlFile:           path.basename(match[1] + '.html'),
+                                htmlFile:           `${match[1]}.html`,
                                 outputDir:          path.resolve(`${this.#dstDir}/${path.dirname(match[1])}`),
                                 outputRoot:         this.#dstDir,
                                 outputAssetRoot:    this.#dstAssetDir
@@ -595,11 +601,16 @@ ${feebackChannels}
         
         this.#building          = true;
         this.#pagesWithErrors   = new Set();
+        this.#watchFilesIgnore  = new Set();
+
+        // Remove old temp files, if any
+        await this.#rmTempDir();
+        await this.#mkTempDir();
 
         if (this.#pagesToBuild.size == 0)
         {
             log(`No pages to build.`);
-            this.#onBuildComplete();
+            await this.#onBuildComplete();
             return;
         }
 
@@ -646,8 +657,8 @@ ${feebackChannels}
         //
 
         const mkdirOptions = { recursive: true };
-        fs.mkdirSync(this.#dstDir,      mkdirOptions);
-        fs.mkdirSync(this.#dstAssetDir, mkdirOptions);
+        await fsp.mkdir(this.#dstDir,      mkdirOptions);
+        await fsp.mkdir(this.#dstAssetDir, mkdirOptions);
 
         const promises = [];
 
@@ -660,7 +671,10 @@ ${feebackChannels}
     async #buildPage(page)
     {
         const mkdirOptions = { recursive: true };
-        fs.mkdirSync(page.outputDir, mkdirOptions);
+        await fsp.mkdir(page.outputDir, mkdirOptions);
+
+        if (this.#commonCssFile)
+            this.#addWatchFile(this.#commonCssFile, page);
 
         //
         // Create an abort controller for graceful failure during the process
@@ -685,65 +699,46 @@ ${feebackChannels}
 
         page.thisBuild =
             {
+                nextUniqueId:   0,
                 inlineJs:       [],
-                keyedInlineJs:  new Map(),
-                scopedCssSet:   new ScopedCssSet()
-            };
-
-        //
-        // Default page config - should this be in a dedicated file?
-        //
-
-        page.thisBuild.config =
-            {
-                client:
+                inlineJsSet:    new Set(),
+                scopedCssSet:   new ScopedCssSet(),
+                config:
                     {
-                        css:    { inline: true },
-                        js:     { inline: true }
+                        client:
+                            {
+                                js: { inline: true }
+                            }
+                    },
+                output:
+                    {
+                        inlineJs: [],
+                        fileJs:   []
                     }
             };
         
-        //
-        // Reset the page watching
-        //
+        if (page.configJsFile)
+        {
+            //
+            // Page config files can override the default page config
+            //
 
-        this.#addWatchFile(this.#commonCssFile, page);
+            this.#addWatchFile(page.configJsFile, page);
+
+            try
+            {
+                const module = await import(pathToFileURL(page.configJsFile).href);   
+                await module.default(page.thisBuild.config);
+            }
+            catch(error)
+            {
+                err(`Error executing page config file: ${page.configJsFile}`);
+                err(error);
+                page.abortController.abort(error);
+            }
+        }
 
         await this.#buildHtmlJs(page);
-        
-        // if (page.configJsFile)
-        // {
-        //     //
-        //     // Page config files can override the default page config
-        //     //
-
-        //     this.#addWatchFile(page.configJsFile, page);
-
-        //     const module = await import(pathToFileURL(page.configJsFile).href);   
-        //     module.default(page.thisBuild.config);
-
-        //     try
-        //     {
-        //         await this.#buildClientJsPage(page);
-        //     }
-        //     catch(error)
-        //     {
-        //         err(`Error building client js for page ${page.uriPath}`);
-        //         page.abortController.abort(error);
-        //     }
-        // }
-        // else
-        // {
-        //     try
-        //     {
-        //         await this.#buildClientJsPage(page);
-        //     }
-        //     catch(error)
-        //     {
-        //         err(`Error building client js for page ${page.uriPath}`);
-        //         page.abortController.abort(error);
-        //     }
-        // }
     }
 
     #getBabelInputPlugin(forClientJs)
@@ -755,6 +750,9 @@ ${feebackChannels}
                 skipPreflightCheck: this.#developmentMode,
                 plugins:
                     [
+                        // Magical source code transformations for the Page.* API.
+                        path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'),
+
                         [
                             //
                             // Allow babel to transpile JSX syntax to our injected functions.
@@ -765,9 +763,7 @@ ${feebackChannels}
                                 pragma:     '__nakedjsx__createElement',
                                 pragmaFrag: '__nakedjsx__createFragment'
                             }
-                        ],
-
-                        path.join(nakedJsxSourceDir, 'babel', 'plugin-await-page-api.mjs')
+                        ]
                     ]
             };
 
@@ -944,7 +940,7 @@ ${feebackChannels}
                             // Useful functions
                             hashAndOutputAsset: async (filename) => this.#hashAndRenameFile(filename, this.#dstAssetDir),
                             assetUriPath:       async (filename) => `${assetUriPathPlaceholder}/${filename}`,
-                            mkdtemp:            async ()         => fsp.mkdtemp(path.join(this.#dstAssetDir, 'import-')),
+                            mkdtemp:            async ()         => fsp.mkdtemp(path.join(this.#tmpDir, 'import-')),
                             resolve
                         },
                         asset);
@@ -1400,6 +1396,29 @@ ${feebackChannels}
     {
         const plugins = [];
 
+        //
+        // If it appears that we are running under a debugger,
+        // add our debug workaround plugin that injects a small
+        // delay to the start of the page JS. This yucky hack
+        // allows early breakpoints in pages to work.
+        //
+        // I will be delighted when this can be replaced with
+        // something deterministic.
+        //
+        // https://github.com/microsoft/vscode-js-debug/issues/1510
+        //
+
+        if (!forClientJs && inspector.url())
+            plugins.push(
+                getBabelOutputPlugin(
+                    {
+                        sourceMaps: this.#developmentMode,
+                        plugins:
+                            [
+                                path.join(nakedJsxSourceDir, 'babel', 'plugin-debug-workaround.mjs')
+                            ],
+                    }));
+
         if (forClientJs)
         {
             //
@@ -1414,9 +1433,24 @@ ${feebackChannels}
         return plugins;
     }
 
+    /**
+     * Ignore changes to this file for the duration of the build.
+     */
+    #ignoreWatchFile(id)
+    {
+        this.#watchFilesIgnore.add(id);
+    }
+
     #addWatchFile(id, page)
     {
         if (!id) // simplify calling code
+            return;
+
+        //
+        // Should we ignore it?
+        //
+
+        if (this.#watchFilesIgnore.has(id))
             return;
         
         let file;
@@ -1461,17 +1495,93 @@ ${feebackChannels}
 
     #emitFile(page, filename, content)
     {
-        return fsp.writeFile(`${page.outputDir}/${filename}`, content);
+        return fsp.writeFile(`${page.outputRoot}/${filename}`, content);
+    }
+
+    async #mkTempDir()
+    {
+        // Create a new one (uniquely named, to defeat import caching)
+        this.#tmpDirVersion++;
+        this.#tmpDir = path.join(this.#tmpRoot, `${this.#tmpDirVersion}`);
+        await fsp.mkdir(this.#tmpDir, { recursive: true });
+    }
+
+    async #rmTempDir()
+    {
+        const builder = this;
+
+        async function deleteAll(dir)
+        {
+            for (const entry of await fsp.readdir(dir, { withFileTypes: true }))
+            {
+                const fullPath = fs.realpathSync(path.join(dir, entry.name));
+                if (!fullPath.startsWith(builder.#dstDir + path.sep))
+                    throw Error(`path to delete (${fullPath}) not under dst dir (${builder.#dstDir})`);
+
+                if (entry.isFile())
+                    await fsp.unlink(fullPath);
+                else if (entry.isDirectory(fullPath))
+                    await deleteAll(fullPath);
+                else
+                    throw Error('Unexpected file type: ' + fullPath);
+            }
+
+            await fsp.rmdir(dir);
+        }
+
+        if (fs.existsSync(this.#tmpRoot))
+            await deleteAll(this.#tmpRoot)
+    }
+
+    #versionedTmpFilePath(relativePath)
+    {
+        return path.join(this.#tmpDir, path.dirname(relativePath), `${this.#tmpDirVersion}.${path.basename(relativePath)}`)
     }
 
     async #buildClientJs(page)
     {
-        if (!page.clientJsFileIn)
+        const { thisBuild } = page;
+
+        //
+        // In dev mode, inject the script that long polls the server for changes.
+        //
+
+        if (this.#developmentMode)
+            thisBuild.inlineJs.push(this.#developmentClientJs);
+
+        const input = [];
+        const inputSourcemapRemap = {};
+
+        if (page.clientJsFileIn)
+            input.push(page.clientJsFileIn);
+
+        if (thisBuild.inlineJs.length)
+        {
+            //
+            // Although we have a unique folder name, it seems we also need a unique
+            // filename to work around vscode breakpoint binding bugs when repeatedly
+            // dynamically import()ing.
+            //
+
+            const inlineJs          = thisBuild.inlineJs.join(';\n');
+            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-inline.mjs');
+            const tmpSrcFile        = this.#versionedTmpFilePath(inlineJsFilename);
+
+            // Make inline source look like it came from src/<page>-inline.mjs'
+            inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
+
+            this.#ignoreWatchFile(tmpSrcFile);
+            await fsp.writeFile(tmpSrcFile, inlineJs);
+
+            input.push(tmpSrcFile);
+        }
+
+        if (!input.length)
             return;
 
         const inputOptions =
             {
-                input: page.clientJsFileIn,
+                input,
                 plugins: this.#rollupPlugins.input.client
             };
 
@@ -1493,7 +1603,7 @@ ${feebackChannels}
                             [
                                 path.join(nakedJsxSourceDir, 'babel', 'plugin-scoped-css.mjs'),
                                 {
-                                    scopedCssSet: page.thisBuild.scopedCssSet
+                                    scopedCssSet: thisBuild.scopedCssSet
                                 }
                             ],
 
@@ -1511,86 +1621,107 @@ ${feebackChannels}
                             }
                         ]],
                 });
+
+        //
+        // NOTE:
+        //
+        // Some effort went to finding a rollup config that would place both the
+        // <page>-client.mjs code and the Page.AppendJs() code in a combined chunk.
+        //
         
         const outputOptions =
             {
-                entryFileNames: '[name].[hash:64].js',
-                format: 'es',
-                sourcemap: this.#developmentMode,
+                entryFileNames: `${page.htmlFile}.[hash:64].js`,
+                format: 'cjs',
+                manualChunks: () => 'this name is not used but is needed',
+                sourcemap: this.#developmentMode ? 'inline' : false,
+                sourcemapPathTransform:
+                    (relativeSourcePath, sourcemapPath) =>
+                    {
+                        const fullPath = path.resolve(path.dirname(sourcemapPath), relativeSourcePath);
+
+                        
+                        if (inputSourcemapRemap[fullPath])
+                        {
+                            // We remapped this path, convert to be relative to the sourcemap path dirname
+                            return path.relative(path.dirname(sourcemapPath), inputSourcemapRemap[fullPath]);
+                        }
+                        else
+                            return relativeSourcePath;
+                    },
                 plugins: [ babelOutputPlugin, ...this.#rollupPlugins.output.client ]
             };    
         
+        let bundle;
+
         try
         {
-            const bundle = await rollup(inputOptions);
-            
-            //
-            // Remember which files, if changed, should trigger a rebuild of this page.
-            // We'll add to this list after compiling the html JS.
-            //
-
-            for (let watchFile of bundle.watchFiles)
-                this.#addWatchFile(watchFile, page);
-
-            const bundlerOutput = await bundle.generate(outputOptions);
-
-            bundle.close();
-
-            const moduleIds = [];
-            const promises = [];
-
-            const chunks = bundlerOutput.output.filter(output => output.type == 'chunk');
-            const assets = bundlerOutput.output.filter(output => output.type == 'asset');
-
-            //
-            // Always output assets (sourcemaps)
-            //
-
-            for (let output of assets)
-                promises.push(this.#emitFile(page, output.fileName, output.source));
-
-            //
-            // emit or inline client JS if we're not inlining it
-            //
-
-            for (let output of chunks)
-            {
-                moduleIds.push(output.moduleIds);
-
-                if (page.thisBuild.config.client.js.inline)
-                {
-                    page.thisBuild.inlineJs.push(output.code);
-                }
-                else
-                {
-                    promises.push(this.#emitFile(page, output.fileName, output.code));
-                    page.thisBuild.clientJsFileOut = output.fileName;
-                }
-            }
-
-            await Promise.all(promises);
-
-            page.thisBuild.clientJsModuleIds = moduleIds.flat();
+            bundle = await rollup(inputOptions);
         }
         catch(error)
         {
-            err(`error during rollup of ${page.clientJsFileIn}`);
-            this.#onPageBuildComplete(page, true)
+            err(`Page client JavaScript compilation error in page ${page.uriPath}`);
+            err(error);
+
+            // Watch related files for changes
+            for (let watchFile of error.watchFiles)
+                this.#addWatchFile(watchFile, page);
+
+            await this.#onPageBuildComplete(page, true);
+            return;
         };
-    }
+        
+        //
+        // Remember which files, if changed, should trigger a rebuild of this page.
+        // We'll add to this list after compiling the html JS.
+        //
 
-    #nextHtmlJsFileOut(baseFilename)
-    {
-        let currentVersion = this.#htmlJsFileOutVersions.get(baseFilename) || 0;
+        for (let watchFile of bundle.watchFiles)
+            this.#addWatchFile(watchFile, page);
 
-        currentVersion++;
-        this.#htmlJsFileOutVersions.set(baseFilename, currentVersion);
+        const bundlerOutput = await bundle.generate(outputOptions);
 
-        return `${baseFilename}.${currentVersion}.mjs`;
+        bundle.close();
+
+        const promises = [];
+
+        const chunks = bundlerOutput.output.filter(output => output.type === 'chunk' && output.imports.length == 0);
+        const assets = bundlerOutput.output.filter(output => output.type === 'asset');
+
+        //
+        // Always output assets (sourcemaps)
+        //
+
+        for (let output of assets)
+            promises.push(this.#emitFile(page, output.fileName, output.source));
+
+        //
+        // Collate all Client JS
+        //
+
+        if (chunks.length > 1)
+            throw Error('Rollup not behaving as expected, please report at: https://github.com/NakedJSX/core/issues');
+        
+        if (chunks.length)
+        {
+            const chunk = chunks[0];
+
+            if (thisBuild.config.client.js.inline)
+                thisBuild.output.inlineJs.push(chunk.code);
+            else
+            {
+                promises.push(this.#emitFile(page, chunk.fileName, chunk.code));
+                thisBuild.output.fileJs.push(path.basename(chunk.fileName));
+            }
+        }
+
+        return Promise.all(promises);
     }
 
     async #buildHtmlJs(page)
     {
+        const { thisBuild } = page;
+
         if (!page.htmlJsFileIn)
         {
             page.abortController.abort(`Page ${page.uriPath} does not have a HTML js file and cannot produce ${page.htmlFile}`);
@@ -1613,18 +1744,15 @@ ${feebackChannels}
                 plugins: this.#rollupPlugins.input.server
             };
 
-        page.thisBuild.htmlJsFileOut = this.#nextHtmlJsFileOut(page.htmlJsFileOutBase)
+        thisBuild.htmlJsFileOut = this.#versionedTmpFilePath(page.htmlFile) + '.page.mjs';
     
         const outputOptions =
             {
-                file: page.thisBuild.htmlJsFileOut,
-                sourcemap: this.#developmentMode,
-                sourcemapExcludeSources: true,
-                format: 'es',
-                plugins: this.#rollupPlugins.output.server,
-                globals: {
-                    'Page': '@nakedjsx/core/page'
-                }
+                file:                       thisBuild.htmlJsFileOut,
+                sourcemap:                  this.#developmentMode ? 'inline' : false,
+                sourcemapExcludeSources:    true,
+                format:                     'es',
+                plugins:                    this.#rollupPlugins.output.server
             };
 
         let bundle;
@@ -1636,7 +1764,12 @@ ${feebackChannels}
         {
             err(`Page compilation error in page ${page.uriPath}`);
             err(error);
-            builder.#onPageBuildComplete(page, true);
+
+            // Watch related files for changes
+            for (let watchFile of error.watchFiles)
+                this.#addWatchFile(watchFile, page);
+
+            await builder.#onPageBuildComplete(page, true);
             return;
         }
 
@@ -1653,13 +1786,6 @@ ${feebackChannels}
 
         bundle.close();
         
-        //
-        // In dev mode, inject the script that long polls the server for changes.
-        //
-
-        if (this.#developmentMode)
-            page.thisBuild.inlineJs.push(this.#developmentClientJs);
-
         //
         // Page JS is built, import it to execute
         //
@@ -1684,15 +1810,15 @@ ${feebackChannels}
                     async () =>
                     {
                         await runWithPageAsyncLocalStorage(
-                            async () => await import(pathToFileURL(page.thisBuild.htmlJsFileOut).href)
+                            async () => await import(pathToFileURL(thisBuild.htmlJsFileOut).href)
                             );
                     }
                 );
         }
         catch(error)
         {
-            err(`error during rollup of ${page.htmlJsFileIn}`);
-            console.error(error);
+            err(`error during execution of ${thisBuild.htmlJsFileOut}`);
+            err(error);
             failed = true;
         };
 
@@ -1706,28 +1832,28 @@ ${feebackChannels}
         if (failed)
         {
             err(`Server js execution error in page ${page.uriPath}`);
-            builder.#onPageBuildComplete(page, true);
+            await builder.#onPageBuildComplete(page, true);
             return;
         }
 
         // Leave the generation JS file in dev mode
         if (!builder.#developmentMode)
-            await fsp.unlink(page.thisBuild.htmlJsFileOut);
+            await fsp.unlink(thisBuild.htmlJsFileOut);
             
-        builder.#onPageBuildComplete(page);
+        await builder.#onPageBuildComplete(page);
 
         async function onRenderStart(outputFilename)
         {
             log(`Page ${page.uriPath} rendering: ${outputFilename}`);
 
-            page.thisBuild.nextOutputFilename = outputFilename;
+            thisBuild.nextOutputFilename = outputFilename;
 
             //
             // Now that Page.Render() has been called, we can finalise our common CSS
             // and reserve all known classes so that generated classes do not clash.
             //
             
-            page.thisBuild.scopedCssSet.reserveCommonCssClasses(getCurrentJob().commonCss);
+            thisBuild.scopedCssSet.reserveCommonCssClasses(getCurrentJob().commonCss);
 
             //
             // Now that common CSS class names have been reserved, we can process
@@ -1740,7 +1866,7 @@ ${feebackChannels}
         function onRendered(htmlContent)
         {
             const outputFilename    = page.thisBuild.nextOutputFilename;
-            const fullPath          = path.normalize(path.join(page.outputDir, outputFilename));
+            const fullPath          = path.normalize(path.join(page.outputRoot, outputFilename));
 
             if (!fullPath.startsWith(builder.#dstDir ))
             {
@@ -1777,7 +1903,7 @@ ${feebackChannels}
         }
     }
 
-    #onPageBuildComplete(page, hasError)
+    async #onPageBuildComplete(page, hasError)
     {
         if (hasError)
             this.#pagesWithErrors.add(page);
@@ -1806,10 +1932,10 @@ ${feebackChannels}
         }
 
         if (!this.#pagesInProgress.size)
-            this.#onBuildComplete();
+            await this.#onBuildComplete();
     }
 
-    #onBuildComplete()
+    async #onBuildComplete()
     {
         this.#building = false;
 
@@ -1834,7 +1960,8 @@ ${feebackChannels}
                 fatal(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
             else
                 log(`Finished build.`);
-            
+
+            await this.#rmTempDir();
             this.exit();
         }
 

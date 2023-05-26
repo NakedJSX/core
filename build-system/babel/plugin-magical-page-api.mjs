@@ -1,11 +1,11 @@
 //
-// Ensure calls to async Page functions are awaited.
+// 1. Ensure calls to async Page functions are awaited.
 //
-// Without this, it's too easy for users to forget to await Page.Render().
-// This creates instability which would be blamed on NakedJSX.
+//     Without this, it's too easy for users to forget to await Page.Render().
+//     This creates instability which would be blamed on NakedJSX.
 //
-// It also keeps the API nice and clean, and the approach allows us to make
-// other calls transparently async later without breaking existing projects.
+//     It also keeps the API nice and clean, and the approach allows us to make
+//     other calls transparently async later without breaking existing projects.
 //
 
 export default function(babel)
