@@ -1,6 +1,3 @@
-import generate_pkg from '@babel/generator';
-const generate = generate_pkg.default;
-
 //
 // 1. Ensure calls to async Page functions are awaited.
 //
@@ -26,7 +23,6 @@ export default function(babel)
 {
     const t = babel.types;
 
-    let awaiting;
     let importedPageIdentifier;
 
     return {
@@ -34,8 +30,7 @@ export default function(babel)
             {
                 Program(nodePath, pluginPass)
                 {
-                    awaiting                 = false;
-                    importedPageIdentifier   = undefined;
+                    importedPageIdentifier = undefined;
                 },
 
                 ImportDeclaration(nodePath, pluginPass)
@@ -63,31 +58,14 @@ export default function(babel)
                     }
                 },
 
-                AwaitExpression:
-                {
-                    enter(nodePath)
-                    {
-                        awaiting = true;
-                    },
-
-                    exit(nodePath)
-                    {
-                        awaiting = true;
-                    }
-                },
-
                 CallExpression(nodePath, pluginPass)
                 {
-                    if (awaiting || !importedPageIdentifier)
+                    if (!importedPageIdentifier)
                         return;
                     
                     const callee = nodePath.node.callee;
                     if (callee.type !== 'MemberExpression')
                         return;
-
-                    //
-                    // Not awaiting obj.prop() - should we be?
-                    //
 
                     if (callee.object.name !== importedPageIdentifier)
                         return;
@@ -98,11 +76,15 @@ export default function(babel)
 
                     if (callee.property.name === 'Render')
                     {
-                        //
-                        // Wrap the non-awaited Page.Render(...) with an AwaitExpression
-                        //
+                        if (nodePath.parentPath.type !== 'AwaitExpression')
+                        {
+                            //
+                            // Wrap the non-awaited Page.Render(...) with an AwaitExpression
+                            //
 
-                        nodePath.replaceWith(t.awaitExpression(nodePath.node));
+                            nodePath.replaceWith(t.awaitExpression(nodePath.node));
+                        }
+
                         return;
                     }
 
@@ -110,7 +92,7 @@ export default function(babel)
                     {
                         const argumentsPath = nodePath.get('arguments');
                         if (argumentsPath.length != 1)
-                            throw path.buildCodeFrameError("Page.AppendJs currently only supports one argument");
+                            throw nodePath.buildCodeFrameError("Page.AppendJs currently only supports one argument");
                         
                         const argumentPath = nodePath.get('arguments.0');
                         const { node: argumentNode } = argumentPath;
@@ -118,7 +100,7 @@ export default function(babel)
                         if (argumentPath.node.type === 'Identifier')
                         {
                             //
-                            // Page.AppendJs() has been passed a variable.
+                            // Page.AppendJs() has been passed a function or a variable variable.
                             //
                             // If we can unambigiously find its value, and that
                             // value is a function, replace it with a string
@@ -128,9 +110,18 @@ export default function(babel)
                             const binding = nodePath.scope.getBinding(argumentNode.name);
                             if (binding?.path?.type === 'FunctionDeclaration')
                             {
-                                // Replace with a string containing the source code for that function
+                                //
+                                // A named function has been passed by name.
+                                // Replace with a string containing the source code for that function.
+                                //
+
                                 nodePath.node.arguments = [t.stringLiteral(binding.path.toString())];
                             }
+
+                            //
+                            // We could add support for const variables that point to functions
+                            // but it seems a bit pointless when the function could just be passed directly.
+                            //
 
                             return;
                         }
@@ -138,12 +129,11 @@ export default function(babel)
                         if (argumentNode.type === 'FunctionExpression' && argumentNode.id)
                         {
                             //
-                            // Page.AppendJs() has been passed a named function:
+                            // Page.AppendJs() has been passed a named function in full:
                             //
                             //     Page.AppendJs(function namedFunction() { ... });
                             //
-                            // We replace this with a string containig the source code
-                            // (including name) of the function.
+                            // We replace this with a string containing the source code of the function.
                             //
 
                             nodePath.node.arguments = [t.stringLiteral(argumentPath.toString())];
@@ -162,7 +152,7 @@ export default function(babel)
                             // In either case it doesn't make sense to add either of these
                             // to the top level scope as-is as they'd never be invoked.
                             //
-                            // However, we can make use of this syntax to add the body
+                            // However, we can make use of this syntax to add the whole body
                             // of the function to the top level scope.
                             //
 
@@ -174,7 +164,7 @@ export default function(babel)
                                     .join('');
 
                             nodePath.node.arguments = [t.stringLiteral(conciseBodyJs)];
-                        }
+                        }                     
                     }
                 }
             }
