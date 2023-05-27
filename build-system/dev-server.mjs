@@ -125,7 +125,7 @@ export class DevServer
         }
         catch(error)
         {
-            err(error);
+            err(error.stack);
         }
         finally
         {

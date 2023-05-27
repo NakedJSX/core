@@ -332,6 +332,22 @@ export const Page =
         },
 
         /**
+         * Add client JS that invokes function with the supplied arguments.
+         * @param {string} functionName - name of function to invoke in client JS.
+         */
+        AppendJsCall(functionName, ...args)
+        {
+            if (typeof functionName !== 'string')
+                throw Error(`Argument passed to AppendJsCall is not a string: ${functionName}`);
+            
+            functionName = functionName.trim();
+            if (functionName === '')
+                throw Error(`AppendJsCall functionName is empty`);
+
+            this.AppendJs(`${functionName}(${args.map(arg => JSON.stringify(arg))})`);
+        },
+
+        /**
          * Allocate an id unique to the page
          */
         UniqueId()

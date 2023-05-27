@@ -289,10 +289,6 @@ export class NakedJSX
         let feebackChannels =
             'Email:   contact@nakedjsx.org\n' +
             'Discord: https://discord.gg/BXQDtub2fS';
-        
-        // // Check time vs expected expiry of Show HN post
-        // if (new Date().getTime() < new Date(Date.UTC(2023, 4, 29, 7, 0, 0)).getTime())
-        //     feebackChannels += `\nShow HN: TODO - post on HN and put URL here`;
 
         log.setPrompt(
 `Thank you for trying NakedJSX prerelease version ${packageInfo.version}!
@@ -306,13 +302,15 @@ NOTE: Things subject to change until version 1.0.0,
 
 Roadmap (not in order):
 
+- Incorporate feedback
 - TypeScript
 - Integrated http proxy
 - Ability to configure default options for plugins
 - Tests
-- Incorporate feedback
+
 - ? Async JSX tags
-- ? Client JSX refs to DOM nodes
+- ? Client JSX ref support
+- ? Client JSX context support
 - ? Ability for HTML JS to make refs available to client JS
 - ? Deno / dpx
 
@@ -734,7 +732,7 @@ ${feebackChannels}
             catch(error)
             {
                 err(`Error executing page config file: ${page.configJsFile}`);
-                err(error);
+                err(error.stack);
                 page.abortController.abort(error);
             }
         }
@@ -1668,7 +1666,7 @@ ${feebackChannels}
         catch(error)
         {
             err(`Page client JavaScript compilation error in page ${page.uriPath}`);
-            err(error);
+            err(error.stack);
 
             // Watch related files for changes
             for (let watchFile of error.watchFiles)
@@ -1770,7 +1768,7 @@ ${feebackChannels}
         catch(error)
         {
             err(`Page compilation error in page ${page.uriPath}`);
-            err(error);
+            err(error.stack);
 
             // Watch related files for changes
             for (let watchFile of error.watchFiles)
@@ -1826,7 +1824,7 @@ ${feebackChannels}
         catch(error)
         {
             err(`error during execution of ${thisBuild.htmlJsFileOut}`);
-            err(error);
+            err(error.stack);
             failed = true;
         };
 
