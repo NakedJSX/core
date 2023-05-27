@@ -304,9 +304,10 @@ NOTE: Things subject to change until version 1.0.0,
       X increments in X.Y.Z and of course all effort
       will be made to avoid them.
 
-Roadmap to 1.0.0:
+Roadmap (not in order):
 
 - TypeScript
+- Integrated http proxy
 - Ability to configure default options for plugins
 - Tests
 - Incorporate feedback
@@ -1542,13 +1543,6 @@ ${feebackChannels}
     {
         const { thisBuild } = page;
 
-        //
-        // In dev mode, inject the script that long polls the server for changes.
-        //
-
-        if (this.#developmentMode)
-            thisBuild.inlineJs.push(this.#developmentClientJs);
-
         const input = [];
         const inputSourcemapRemap = {};
 
@@ -1563,11 +1557,24 @@ ${feebackChannels}
             // dynamically import()ing.
             //
 
-            const inlineJs          = thisBuild.inlineJs.join(';\n');
-            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-inline.mjs');
+            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-page.mjs');
             const tmpSrcFile        = this.#versionedTmpFilePath(inlineJsFilename);
 
-            // Make inline source look like it came from src/<page>-inline.mjs'
+            // Ensure each inline js ends with ';' before joining
+            const inlineJs =
+                thisBuild.inlineJs
+                    .map(
+                        js =>
+                        {
+                            js = js.trim();
+                            if (js.endsWith(';'))
+                                return js;
+                            else
+                                return `${js};`;
+                        })
+                    .join('\n\n');
+
+            // Make inline source look like it came from src/<page>-page.mjs'
             inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
 
             this.#ignoreWatchFile(tmpSrcFile);
@@ -1744,7 +1751,7 @@ ${feebackChannels}
                 plugins: this.#rollupPlugins.input.server
             };
 
-        thisBuild.htmlJsFileOut = this.#versionedTmpFilePath(page.htmlFile) + '.page.mjs';
+        thisBuild.htmlJsFileOut = this.#versionedTmpFilePath(page.htmlFile.replace(/.html$/, '-page.mjs'));
     
         const outputOptions =
             {
@@ -1801,8 +1808,9 @@ ${feebackChannels}
             await currentJob
                 .run(
                     {
-                        developmentMode:    this.#developmentMode,
-                        commonCss:          this.#commonCss,
+                        developmentMode:        this.#developmentMode,
+                        developmentJsInjection: this.#developmentClientJs,
+                        commonCss:              this.#commonCss,
                         page,
                         onRenderStart,
                         onRendered

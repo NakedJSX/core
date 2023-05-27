@@ -300,7 +300,12 @@ export const Page =
          */
         AppendJs(js, { allowDuplicate } = {})
         {
-            // convert function objects to string
+            //
+            // Convert any remaining function objects to string.
+            // Hopefully they have been converted to strings by
+            // the page page api babel plugin.
+            //
+            
             const jsString = `${js}`;
 
             const { thisBuild } = getCurrentJob().page;
@@ -363,7 +368,7 @@ export const Page =
          */
         async Render(outputFilename)
         {
-            const { page, commonCss, onRenderStart, onRendered } = getCurrentJob();
+            const { page, commonCss, onRenderStart, onRendered, developmentMode, developmentJsInjection } = getCurrentJob();
 
             //
             // Let the build system know that this page is fully configured.
@@ -396,6 +401,26 @@ export const Page =
             //
             // Generate <script> tags for javascript
             //
+
+            if (developmentMode)
+            {
+                //
+                // Inject the dev server client script that causes auto-fresh to work
+                //
+
+                // Equivalent to this.AppendBody(<script><raw-content content={developmentJsInjection} /></script>);
+                this.AppendBody(
+                    __nakedjsx__createElement(
+                        'script',
+                        null,
+                        __nakedjsx__createElement(
+                            'raw-content',
+                            {
+                                content: developmentJsInjection
+                            })
+                        )
+                    );
+            }
 
             for (const src of page.thisBuild.output.fileJs)
             {
