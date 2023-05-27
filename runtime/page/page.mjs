@@ -380,11 +380,16 @@ export const Page =
 
         /**
          * Render the HTML page and pass it back to the build process.
-         * @param {string} [outputFilename] - Override the default name of the generated html file
+         * @param {string} [outputFilename] - Override the default name of the generated html file, relative to the default output dir.
          */
         async Render(outputFilename)
         {
             const { page, commonCss, onRenderStart, onRendered, developmentMode, developmentJsInjection } = getCurrentJob();
+
+            if (outputFilename)
+                outputFilename = path.join(path.dirname(page.htmlFile), outputFilename);
+            else
+                outputFilename = page.htmlFile;
 
             //
             // Let the build system know that this page is fully configured.
@@ -393,7 +398,7 @@ export const Page =
             // NOTHING ASYNC CAN BE SAFELY INVOKED BEFORE onRenderStart()
             //
 
-            await onRenderStart(outputFilename ?? page.htmlFile);
+            await onRenderStart(outputFilename);
 
             //
             // We have our page structure, it's now time to process CSS attributes
@@ -477,9 +482,9 @@ export const Page =
                 path.normalize(
                     path.join(
                         page.outputRoot,
-                        outputFilename ?? page.htmlFile
+                        outputFilename
                         )
-                );
+                    );
 
             const relativeAssetRoot =
                 path.relative(
