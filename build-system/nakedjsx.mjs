@@ -1555,7 +1555,7 @@ ${feebackChannels}
             // dynamically import()ing.
             //
 
-            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-page.mjs');
+            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-page-inline.mjs');
             const tmpSrcFile        = this.#versionedTmpFilePath(inlineJsFilename);
 
             // Ensure each inline js ends with ';' before joining
@@ -1572,7 +1572,7 @@ ${feebackChannels}
                         })
                     .join('\n\n');
 
-            // Make inline source look like it came from src/<page>-page.mjs'
+            // Make inline source look like it came from src/<page>-page-inline.mjs'
             inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
 
             this.#ignoreWatchFile(tmpSrcFile);
