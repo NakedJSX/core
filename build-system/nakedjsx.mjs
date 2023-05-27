@@ -846,7 +846,7 @@ ${feebackChannels}
         //
         // The asset js file is expected to export a function:
         //
-        //     export default function({ addJsx }) { ... }
+        //     export default async function({ addJsx }) { ... }
         //
         // where addJsx is a callback:
         //
