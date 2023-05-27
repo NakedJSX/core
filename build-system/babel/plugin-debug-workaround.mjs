@@ -28,15 +28,20 @@ export default function(babel)
                 Program(nodePath)
                 {
                     //
-                    // await new Promise(resolve => setTimeout(resolve, 25));
+                    // Place the following code at the start of the program:
+                    //
+                    //     /* Hack: give vscode time to connect breakpoints for dynamic import ... */
+                    //     await new Promise(resolve => setTimeout(resolve, 25));
                     //
 
-                    const promiseImpl =
+                    nodePath.addComment('leading', ' Hack: give vscode time to connect breakpoints for dynamic import ... ');
+
+                    const delayCode =
                         t.arrowFunctionExpression(
-                            [t.identifier('resolve2')],
+                            [t.identifier('resolve')],
                             t.callExpression(
                                 t.identifier('setTimeout'),
-                                [t.identifier('resolve2'), t.numericLiteral(25)]
+                                [t.identifier('resolve'), t.numericLiteral(25)]
                                 )
                             );
                     
@@ -46,7 +51,7 @@ export default function(babel)
                             t.awaitExpression(
                                 t.newExpression(
                                     t.identifier('Promise'),
-                                    [promiseImpl]
+                                    [delayCode]
                                     )
                                 )
                             )
