@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http'
-import { URL, fileURLToPath } from 'node:url';
+import { URL } from 'node:url';
 
-import { log  } from './util.mjs';
+import { log, err } from './util.mjs';
 
 //
 // Super simple long-poll dev server.
@@ -61,18 +61,6 @@ export class DevServer
         server.listen(serverPort);
     }
 
-    onUriPathUpdated(uriPath)
-    {
-        const idleClients = this.#idleClients.get(uriPath);
-        if (idleClients)
-        {
-            this.#idleClients.delete(uriPath);
-
-            for (let response of idleClients)
-                this.#respondUtf8(response, 200, 'application/json', JSON.stringify({ action: 'reload' }));
-        }
-    }
-
     get serverUrl()
     {
         return this.#serverUrl;
@@ -80,7 +68,7 @@ export class DevServer
 
     ////
 
-    #handleRequest(req, response)
+    async #handleRequest(req, response)
     {
         const url       = new URL(req.url, 'http://localhost/');
         const pathname  = url.pathname;
@@ -90,49 +78,59 @@ export class DevServer
         if (pathname.startsWith('/nakedjsx:/'))
             return this.#handleDevRequest(req, response, url);
 
-        let file;
-
-        if (pathname.endsWith('/'))
-            file = `${this.#serverRoot}${pathname}index.html`;
-        else
-            file = `${this.#serverRoot}${pathname}`;
-
-        function resolve(testfile, onResolved, onError)
+        // For non dev requests, ensure we end the response
+        try
         {
-            fsp.realpath(testfile)
-                .then(
-                    (resolvedFile) =>
-                    {
-                        fsp.stat(resolvedFile)
-                            .then(
-                                (stat) =>
-                                {
-                                    if (stat.isFile())
-                                        onResolved(resolvedFile);
-                                    else
-                                        onError(new Error(`Not a file: ${resolvedFile}`));
-                                })
-                            .catch(onError);
-                    })
-                .catch(onError);
-        }
+            let file;
 
-        resolve(
-            file,
-            (resolvedFile) => this.#serveFile(response, resolvedFile),
-            (outerError) =>
+            if (pathname.endsWith('/'))
+                file = `${this.#serverRoot}${pathname}index.html`;
+            else
+                file = `${this.#serverRoot}${pathname}`;
+
+            async function resolve(testfile, onResolved, onError)
             {
-                // If the bad path included a file extension, nothing more to try
-                if (path.extname(file))
-                    return this.#respondUtf8(response, 404, 'text/plain', outerError.toString());
-                
-                // Try the same path but plop a .html on the end of it.
-                resolve(
-                    file + '.html',
-                    (resolvedFile) => this.#serveFile(response, resolvedFile),
-                    (innerError) => this.#respondUtf8(response, 404, 'text/plain', outerError.toString())
-                    );
-            });
+                try
+                {
+                    const resolvedFile  = await fsp.realpath(testfile);
+                    const stat          = await fsp.stat(resolvedFile);
+
+                    if (stat.isFile())
+                        await onResolved(resolvedFile);
+                    else
+                        await onError(new Error(`Not a file: ${resolvedFile}`));
+                }
+                catch(error)
+                {
+                    await onError(error);
+                }
+            }
+
+            await resolve(
+                file,
+                async (resolvedFile) => this.#serveFile(response, resolvedFile),
+                async (outerError) =>
+                {
+                    // If the bad path included a file extension, nothing more to try
+                    if (path.extname(file))
+                        return this.#respondUtf8(response, 404, 'text/plain', outerError.toString());
+                    
+                    // Try the same path but plop a .html on the end of it.
+                    await resolve(
+                        file + '.html',
+                        async (resolvedFile) => this.#serveFile(response, resolvedFile),
+                        async (innerError) => this.#respondUtf8(response, 404, 'text/plain', outerError.toString())
+                        );
+                });
+        }
+        catch(error)
+        {
+            err(error);
+        }
+        finally
+        {
+            response.end();
+        }
     }
 
     #respondUtf8(response, code, contentType, content, headers = {})
@@ -180,7 +178,7 @@ export class DevServer
         return contentTypes[ext] || { type: 'application/octet-stream', maxAge: -1 };
     }
 
-    #serveFile(response, filepath)
+    async #serveFile(response, filepath)
     {
         // log(` (${filepath})`);
 
@@ -195,10 +193,18 @@ export class DevServer
         else
             cacheControl = `max-age=-1`;
         
-        fsp.readFile(filepath)
-            .then( content => this.#respondBinary(response, 200, type.type,    content, { 'Cache-Control': cacheControl }))
-            .catch(error   => this.#respondUtf8(  response, 500, 'text/plain', error.toString()));
+        try
+        {
+            const content = await fsp.readFile(filepath);
+            this.#respondBinary(response, 200, type.type, content, { 'Cache-Control': cacheControl });
+        }
+        catch(error)
+        {
+            this.#respondUtf8(response, 500, 'text/plain', error.toString());
+        }
     }
+
+    ////
 
     #handleDevRequest(req, response, url)
     {
@@ -230,10 +236,29 @@ export class DevServer
                 else
                     this.#idleClients.set(idlePath, [ response ]);
 
+                response.writeHead(
+                    202,
+                    {
+                        'Content-Type': 'application/json'
+                    });
+                response.flushHeaders();
+
                 break;
 
             default:
                 this.#respondUtf8(response, 404, 'text/plain', '');
+        }
+    }
+
+    onUriPathUpdated(uriPath)
+    {
+        const idleClients = this.#idleClients.get(uriPath);
+        if (idleClients)
+        {
+            this.#idleClients.delete(uriPath);
+
+            for (let response of idleClients)
+                response.end(JSON.stringify({ action: 'reload' }), 'utf-8');
         }
     }
 }
