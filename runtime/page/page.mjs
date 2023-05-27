@@ -344,7 +344,7 @@ export const Page =
             if (functionName === '')
                 throw Error(`AppendJsCall functionName is empty`);
 
-            this.AppendJs(`${functionName}(${args.map(arg => JSON.stringify(arg))})`);
+            this.AppendJs(`${functionName}(${args.map(arg => JSON.stringify(arg))})`, { allowDuplicate: true });
         },
 
         /**
