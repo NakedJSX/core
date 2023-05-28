@@ -38,6 +38,47 @@ function getDocument(document)
     return asyncLocalStorage.getStore().document;
 }
 
+function makeContext()
+{
+    let parent;
+
+    function _setParent(newParent)
+    {
+        parent = newParent;
+    }
+    
+    const context =
+        new Proxy(
+            new Map(),
+            {
+                set(target, property, value)
+                {
+                    if (property.startsWith('_'))
+                        throw Error('Cannot set context properties with keys starting with _');
+
+                    target.set(property, value);
+
+                    return true;
+                },
+
+                get(target, property)
+                {
+                    if (property === _setParent.name)
+                        return _setParent.bind(null);
+
+                    if (target.has(property))
+                        return target.get(property);
+                    
+                    if (parent)
+                        return parent[property];
+
+                    return undefined;
+                }
+            });
+
+    return context;
+}
+
 class DeferredElement
 {
     context;
@@ -84,53 +125,16 @@ export function __nakedjsx__createElement(tag, props, ...children)
     // The natural order of execution is depth first, so
     // we jump through a few hoops to change that.
     //
-
-    let parent;
-
-    function _setParent(newParent)
-    {
-        parent = newParent;
-    }
-
-    const context =
-        new Proxy(
-            new Map(),
-            {
-                set(target, property, value)
-                {
-                    if (property.startsWith('_'))
-                        throw Error('Cannot set context properties with keys starting with _');
-
-                    target.set(property, value);
-
-                    return true;
-                },
-
-                get(target, property)
-                {
-                    if (property === _setParent.name)
-                        return _setParent.bind(null);
-
-                    if (target.has(property))
-                        return target.get(property);
-                    
-                    if (parent)
-                        return parent[property];
-
-                    return undefined;
-                }
-            });
     
     props = props ?? {};
-    
-    props.context = context;
+    props.context = makeContext();
 
     if (children)
         for (const child of children)
             if (child instanceof DeferredElement)
-                child.context._setParent(context);
+                child.context._setParent(props.context);
     
-    return new DeferredElement(context, createElement.bind(null, tag, props, children));
+    return new DeferredElement(props.context, createElement.bind(null, tag, props, children));
 }
 
 function createElement(tag, props, children)
@@ -368,7 +372,7 @@ export const Page =
         EvaluateNow(jsx)
         {
             const rendered = renderNow(jsx);
-            return new DeferredElement(null, () => rendered);
+            return new DeferredElement(makeContext(), () => rendered);
         },
 
         /**
