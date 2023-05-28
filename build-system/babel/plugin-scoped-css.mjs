@@ -9,7 +9,7 @@ export default function(babel, options)
 
     const { scopedCssSet } = options;
 
-    function getNodeStringValue(node)
+    function getNodeStringValue(node, errorPath)
     {
         if (t.isStringLiteral(node))
             return node.value;
@@ -22,18 +22,18 @@ export default function(babel, options)
             // The embedded variable syntax is not supported as this would
             // require eval() at compile time and would be of limited benefit.
             //
+            // We could check if all the components are const but that would
+            // assume that the compile time init value is the correct value.
+            //
 
             if (node.expressions.length > 0 || node.quasis.length != 1)
-            {
-                err(`Javascript variables within scoped css attributes are not currently supported in client Javascript. If you need this, consider using a style={\`...\`} attribute instead.\n    at file://${currentFileInfo.filePath}:${node.loc.start.line}:${node.loc.start.column}`);
-                return undefined;
-            }
+                throw errorPath.buildCodeFrameError('Javascript variables within scoped css attributes are not currently supported in client Javascript. If you need this, consider using a style={`...`} attribute instead.');
 
             return node.quasis[0].value.cooked;
         }
 
         if (t.isJSXExpressionContainer(node))
-            return getNodeStringValue(node.expression);
+            return getNodeStringValue(node.expression, errorPath);
         
         return undefined;
     }
@@ -41,7 +41,7 @@ export default function(babel, options)
     return {
         visitor:
             {
-                CallExpression(nodePath, pluginPass)
+                CallExpression(nodePath, state)
                 {
                     const callee = nodePath.node.callee;
 
@@ -69,7 +69,7 @@ export default function(babel, options)
                     // It's time to convert this scoped CSS into a class prop.
                     //
 
-                    const scopedCss = getNodeStringValue(cssPropPath.node.value);
+                    const scopedCss = getNodeStringValue(cssPropPath.node.value, cssPropPath);
 
                     // Remove the css prop no matter what
                     cssPropPath.remove();
@@ -87,7 +87,7 @@ export default function(babel, options)
 
                     if (classNamePropPath)
                     {
-                        const classNames = `${cssClassName} ${getNodeStringValue(classNamePropPath.node.value)}`;
+                        const classNames = `${cssClassName} ${getNodeStringValue(classNamePropPath.node.value, classNamePropPath)}`;
                         classNamePropPath.node.value = t.stringLiteral(classNames);
                     }
                     else
