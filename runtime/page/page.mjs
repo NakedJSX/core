@@ -190,12 +190,13 @@ function renderNow(deferredRender)
         return deferredRender.flat().map(renderNow);
     else if (deferredRender instanceof DeferredElement)
         return deferredRender.impl();
-    else if (typeof deferredRender === 'string')
-        return deferredRender;
-    else if (deferredRender === undefined || deferredRender === false)
+    else if (deferredRender === undefined || deferredRender === null || deferredRender === false || deferredRender === true)
         return undefined;
+    else if (typeof deferredRender == 'string')
+        return deferredRender;
     else
-        throw Error('Unexpected type passed to renderNow: ' + typeof deferredRender);
+        // Convert anything else, number etc, to a string
+        return `${deferredRender}`
 }
 
 /**
