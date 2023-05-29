@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import inspector from 'node:inspector'
+import querystring from 'node:querystring';
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
@@ -17,7 +18,7 @@ import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, fatal, absolutePath, enableBenchmark } from './util.mjs';
+import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import { assetUriPathPlaceholder } from '../runtime/page/document.mjs'
 import { runWithPageAsyncLocalStorage } from '../runtime/page/page.mjs';
@@ -50,7 +51,7 @@ export const emptyConfig =
         pathAliases:                {},
         definitions:                {},
         browserslistTargetQuery:    'defaults',
-        plugins:                    [],
+        plugins:                    {},
         importResolveOverrides:     {}
     };
 
@@ -137,7 +138,7 @@ export class NakedJSX
 
         const configFilePath = path.join(this.#srcDir, configFilename)
 
-        this.#config = Object.assign({}, emptyConfig);
+        this.#config = jsonClone(emptyConfig);
 
         if (configOverride)
         {
@@ -159,7 +160,7 @@ export class NakedJSX
             log(`No config file ${configFilePath}, using default config`);
 
         // Definitions might be sensitive, so mask them when dumping the effective config
-        const redactedConfig = Object.assign({}, JSON.parse(JSON.stringify(this.#config)));
+        const redactedConfig = jsonClone(JSON.parse(JSON.stringify(this.#config)));
 
         for (const key in redactedConfig.definitions)
             redactedConfig.definitions[key] = '****';
@@ -250,8 +251,13 @@ export class NakedJSX
         // Register plugins
         //
 
-        for (let pluginPackageNameOrPath of config.plugins)
+        for (let [alias, pluginPackageNameOrPath] of Object.entries(config.plugins))
         {
+            const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
+
+            if (!validIdRegex.test(alias))
+                fatal(`Cannot register plugin with bad alias ${alias}. An plugin alias can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
+
             if (config.importResolveOverrides[pluginPackageNameOrPath])
                 pluginPackageNameOrPath =
                     pathToFileURL(config.importResolveOverrides[pluginPackageNameOrPath]).href;
@@ -263,25 +269,20 @@ export class NakedJSX
                     logging: { log, warn, err, fatal },
 
                     // Plugins call this to register themselves.
-                    register: this.#registerPlugin.bind(this)
+                    register: this.#registerPlugin.bind(this, alias)
                 });
         }
     }
 
-    #registerPlugin(plugin)
+    #registerPlugin(alias, plugin)
     {
-        const validIdRegex = /^[a-z0-9]([a-z0-9]*|[a-z0-9\-]*[a-z0-9])$/;
-
-        if (!validIdRegex.test(plugin.id))
-            fatal(`Cannot register plugin with bad id ${plugin.id}. An id can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
-
         if (plugin.type === 'asset')
         {
-            log(`Registering ${plugin.type} plugin with id: ${plugin.id}`);
-            this.#assetImportPlugins.set(plugin.id, plugin);
+            log(`Registering ${plugin.type} plugin with alias: ${alias}`);
+            this.#assetImportPlugins.set(alias, plugin);
         }
         else
-            fatal(`Cannot register plugin of unknown type ${plugin.type}, (id is ${plugin.id})`);
+            fatal(`Cannot register plugin of unknown type ${plugin.type}, (alias is ${alias})`);
     }
 
     #logFinalThoughts()
@@ -300,19 +301,22 @@ NOTE: Things subject to change until version 1.0.0,
       X increments in X.Y.Z and of course all effort
       will be made to avoid them.
 
-Roadmap (not in order):
+Roadmap:
 
 - Incorporate feedback
-- TypeScript
+- TypeScript in page source
 - Integrated http proxy
+- ImageMagick support in @nakedjsx/plugin-asset-image
 - Ability to configure default options for plugins
 - Tests
 
-- ? Async JSX tags
-- ? Client JSX ref support
-- ? Client JSX context support
-- ? Ability for HTML JS to make refs available to client JS
-- ? Deno / dpx
+Under consideration:
+
+- Async JSX tags
+- Client JSX ref support
+- Client JSX context support
+- Ability for HTML JS to make refs available to client JS
+- Support Deno / dpx
 
 All feedback is appreciated:
 
@@ -817,15 +821,39 @@ ${feebackChannels}
     async #importAssetRaw(asset, resolve)
     {
         //
-        // Make the raw asset content available to source code, as a string.
-        // Suitable for text content, such as an SVG, that you'd like to embed
-        // the page HTML or client JS.
+        // Make the raw asset content available to source code, as a string or a Buffer.
+        //
+        // Suitable for text content, such as an SVG, that you'd like to embed in the page.
         //
 
-        const content = await fsp.readFile(asset.file);
-        const result = `export default ${JSON.stringify(content.toString())};`;
+        const options =
+            {
+                as: 'utf-8', // Also supported: Buffer.
+
+                ...querystring.decode(asset.optionsString)
+            };
+
+        if (options.as === 'Buffer')
+        {
+            // return code that creates the buffer from the file on demand
+            const result =
+`import fsp from 'node:fs/promises';
+export default Buffer.from(await fsp.readFile(${JSON.stringify(asset.file)}));`;
         
-        return result;
+            return result;
+        }
+
+        if (options.as === 'utf-8')
+        {
+            // return code that loads the file into a string on demand
+            const result =
+`import fsp from 'node:fs/promises';
+export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
+        
+            return result;
+        }
+        
+        throw Error(`Bad 'as' for raw import: ${options.id}`);
     }
 
     async #importAssetJson(asset, resolve)
@@ -953,7 +981,7 @@ ${feebackChannels}
         if (asset.type === 'dynamic')
             return this.#importAssetDynamic(asset, resolve);
 
-        throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}.`);
+        throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}. Did you forget to enable a plugin?`);
     }
 
     #applyPathAliases(file)

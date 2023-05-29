@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { packageInfo, configFilename, emptyConfig, NakedJSX } from './nakedjsx.mjs';
-import { log, fatal, camelToKebabCase, absolutePath, warn } from './util.mjs';
+import { log, warn, fatal, jsonClone, camelToKebabCase, absolutePath } from './util.mjs';
 
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
@@ -114,9 +114,9 @@ const options =
 
         '--plugin':
             {
-                desc: 'Enable plugin such as @nakedjsx/plugin-asset-image.',
-                args: ['pluginPackageNameOrPath'],
-                async impl(config, { pluginPackageNameOrPath })
+                desc: 'Enable plugin and set its unique alias, for example: --plugin image @nakedjsx/plugin-asset-image',
+                args: ['alias', 'pluginPackageNameOrPath'],
+                async impl(config, { alias, pluginPackageNameOrPath })
                 {
                     let finalPath;
 
@@ -125,9 +125,11 @@ const options =
                     else
                         // hopefully a package name like @nakedjsx/plugin-asset-image
                         finalPath = pluginPackageNameOrPath;
+                    
+                    if (config.plugins[alias])
+                        fatal(`Plugin alias '${alias}' already used by ${config.plugins[alias]}`);
 
-                    if (!config.plugins.includes(finalPath))
-                        config.plugins.push(finalPath);
+                    config.plugins[alias] = finalPath;
                 }
             },
 
@@ -214,7 +216,11 @@ Usage:
     npx nakedjsx <pages-directory> [options]
 
 Options:
-${optionsHelp}`);
+${optionsHelp}
+Detailed documentation:
+
+    https://nakedjsx.org/documentation`
+        );
 }
 
 function determineRootDir(args)
@@ -248,8 +254,8 @@ function loadBaseConfig()
     // Attempt to load config from pages dir
     //
 
-    const config = Object.assign({}, emptyConfig);
-    const configFile = path.join(rootDir, configFilename);
+    const config        = jsonClone(emptyConfig);
+    const configFile    = path.join(rootDir, configFilename);
 
     if (!fs.existsSync(configFile))
         return config;

@@ -97,9 +97,9 @@ export function fatal(message, lastHurrahCallback)
     process.exit(1);
 }
 
-export function isExternalImport(id)
+export function jsonClone(src)
 {
-    return id.includes('/node_modules/') || id.includes('/.yarn/');
+    return JSON.parse(JSON.stringify(src));
 }
 
 export function convertToAlphaNum(value, digitSymbols)
