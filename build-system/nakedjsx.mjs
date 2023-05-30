@@ -1601,7 +1601,12 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 .map(js => semicolonify(js))
                 .join('\n\n');
 
-        // Make inline source look like it came from src/<page>-page-inline.mjs'
+        //
+        // Make inline source look like it came from src/<page>-page-client.mjs'
+        // Ideally it would show up as a seperate file from the real client JS,
+        // which will require manipulating the sourcemap after the build.
+        //
+        
         inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
 
         this.#ignoreWatchFile(tmpSrcFile);
