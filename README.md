@@ -1,4 +1,6 @@
-# core
-NakedJSX development server and build tool.
+# @nakedjsx/core
+The NakedJSX development server and build tool.
 
-This is a pre-version 1.0.0 release. Everything subject to change.
+Many users will not use this package directly, and will use `npx nakedjsx` instead.
+
+Please see the [documentation](https://nakedjsx.org/documentation) for more information.
