@@ -311,10 +311,9 @@ Roadmap:
 
 Under consideration:
 
-- Async JSX functions
 - Client JSX ref support
 - Client JSX context support
-- Ability for HTML JS to make refs available to client JS
+- Ability for page JS to make refs available to client JS
 - Support Deno / dpx
 
 All feedback is appreciated:
@@ -1606,7 +1605,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         // Ideally it would show up as a seperate file from the real client JS,
         // which will require manipulating the sourcemap after the build.
         //
-        
+
         inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
 
         this.#ignoreWatchFile(tmpSrcFile);
@@ -1828,11 +1827,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         // Page JS is built, import it to execute
         //
 
-        const writePromises = [];
+        const writePromises = []; // populated by onRendered()
         let failed = false;
-
-        // take note of the keys in the default global scope
-        const standardGlobalKeys = new Set(Object.keys(global));
 
         try
         {
@@ -1859,11 +1855,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             err(error.stack);
             failed = true;
         };
-
-        // Remove anything added to global scope
-        for (let key of Object.keys(global))
-            if (!standardGlobalKeys.has(key))
-                delete global[key];
 
         await Promise.all(writePromises);
                         
