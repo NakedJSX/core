@@ -312,7 +312,7 @@ Roadmap:
 
 Under consideration:
 
-- Async JSX tags
+- Async JSX functions
 - Client JSX ref support
 - Client JSX context support
 - Ability for HTML JS to make refs available to client JS
@@ -888,7 +888,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         //
         // The result will be an array of [meta, FunctionGeneratedFromJsx]
         // such that HTML rendering code can use FunctionGeneratedFromJsx 
-        // as a JSX tag.
+        // as a JSX function.
         //
         // e.g.
         //

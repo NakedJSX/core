@@ -118,7 +118,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
     // Each element has a magical context prop that proxies
     // context data from parent elements (when attached).
     //
-    // For this to be useful, parents JSX tags need to execute
+    // For this to be useful, parents JSX functions need to execute
     // before child tags - otherwise it would be too late
     // to provide context data to the child.
     //

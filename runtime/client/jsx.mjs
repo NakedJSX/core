@@ -30,7 +30,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
     }
 
     //
-    // We're dealing with regular HTML, not a JSX tag
+    // We're dealing with regular HTML, not a JSX function
     //
 
     const element = document.createElement(tag);
