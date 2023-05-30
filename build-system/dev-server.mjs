@@ -14,17 +14,23 @@ import { log, err } from './util.mjs';
 
 export class DevServer
 {
+    #clientJsFile;
+
     #serverRoot;
     #serverUrl;
 
     #idleClients = new Map(); // page url -> [ idle http response ]
 
-    constructor({ serverRoot })
+    constructor({ serverRoot, clientJsFile })
     {
         if (!fs.existsSync(serverRoot))
             throw new Error(`serverRoot ${serverRoot} does not exist`);
 
-        this.#serverRoot = serverRoot;
+        if (!fs.existsSync(clientJsFile))
+            throw new Error(`clientJsFile ${clientJsFile} does not exist`);
+
+        this.#serverRoot    = serverRoot;
+        this.#clientJsFile  = clientJsFile;
     
         //
         // Start a local dev web server
@@ -166,8 +172,8 @@ export class DevServer
         const contentTypes =
             {
                 '.html':    { type: 'text/html',        maxAge: -1  },
+                '.js':      { type: 'text/javascript',  maxAge: -1  }, // Needs to be -1 until a hash is put into /nakedjsx:/client.js request
                 '.css':     { type: 'text/css',         maxAge: 300 },
-                '.js':      { type: 'text/javascript',  maxAge: 300 },
                 '.svg':     { type: 'image/svg+xml',    maxAge: 300 },
                 '.webp':    { type: 'image/webp',       maxAge: 300 },
                 '.png':     { type: 'image/png',        maxAge: 300 },
@@ -182,7 +188,7 @@ export class DevServer
     {
         // log(` (${filepath})`);
 
-        if (!filepath.startsWith(this.#serverRoot))
+        if (!filepath.startsWith(this.#serverRoot) && filepath != this.#clientJsFile)
             return this.#respondUtf8(response, 404, 'text/plain');
         
         const type = this.#getFileType(filepath);
@@ -212,6 +218,10 @@ export class DevServer
         
         switch(functionPath)
         {
+            case '/client.js':
+                this.#serveFile(response, this.#clientJsFile);
+                break;
+
             case '/idle':
                 let idlePath = url.searchParams.get('path');
 

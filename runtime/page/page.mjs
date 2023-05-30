@@ -155,17 +155,42 @@ function createElement(tag, props, children)
 
     const { document }  = asyncLocalStorage.getStore();
     const element       = document.createElement(tag, props.context);
+    const eventHandlers = [];
 
     Object.entries(props).forEach(
         ([name, value]) =>
         {
-            if (typeof window !== 'undefined' && name.startsWith('on') && name.toLowerCase() in window)
-                element.addEventListener(name.toLowerCase().substring(2), value);
+            if (name.startsWith('on'))
+                eventHandlers.push({ name, value});
             else if (name === 'className')
                 element.setAttribute('class', value);
             else
                 element.setAttribute(name, value);
         });
+    
+    //
+    // Generate event handling JS
+    //
+    // It's done this way so that terser tree shaking
+    // doesn't remove otherwise unused handlers in the client js,
+    // and also that the function names can be mangled.
+    //
+
+    // It will need an id to hook up the handler
+    if (eventHandlers.length)
+        if (element.id === undefined)
+            element.setAttribute('id', Page.UniqueId());
+
+    for (const { name, value } of eventHandlers)
+    {
+        const onEvent = name.toLowerCase();
+        Page.AppendJs(
+`(()=>{
+    var e = document.getElementById(${JSON.stringify(element.id)});
+    e.${onEvent} = (function(event) { ${value} }).bind(e);
+})()`
+            );
+    }
 
     children.forEach((child) => element.appendChild(renderNow(child)));
 
@@ -359,7 +384,7 @@ export const Page =
         {
             const { thisBuild } = getCurrentJob().page;
 
-            return '__nakedjsx__' + convertToAlphaNum(thisBuild.nextUniqueId++);
+            return thisBuild.config.uniquePrefix + convertToAlphaNum(thisBuild.nextUniqueId++) + thisBuild.config.uniqueSuffix;
         },
 
         /**
@@ -389,7 +414,7 @@ export const Page =
          */
         async Render(outputFilename)
         {
-            const { page, commonCss, onRenderStart, onRendered, developmentMode, developmentJsInjection } = getCurrentJob();
+            const { page, commonCss, onRenderStart, onRendered, developmentMode } = getCurrentJob();
 
             if (outputFilename)
                 outputFilename = path.join(path.dirname(page.htmlFile), outputFilename);
@@ -434,23 +459,21 @@ export const Page =
                 // Inject the dev server client script that causes auto-fresh to work
                 //
 
-                // Equivalent to this.AppendBody(<script><raw-content content={developmentJsInjection} /></script>);
-                this.AppendBody(
+                // Equivalent to this.AppendHead(<script src="/nakedjsx:/client.js" async defer />);
+                this.AppendHead(
                     __nakedjsx__createElement(
                         'script',
-                        null,
-                        __nakedjsx__createElement(
-                            'raw-content',
-                            {
-                                content: developmentJsInjection
-                            })
-                        )
+                        {
+                            src: '/nakedjsx:/client.js',
+                            async: true,
+                            defer: true
+                        })
                     );
             }
 
             for (const src of page.thisBuild.output.fileJs)
             {
-                // Equivalent to this.AppendHead(<script src={src} async defer></script>);
+                // Equivalent to this.AppendHead(<script src={src} async defer />);
                 this.AppendHead(
                     __nakedjsx__createElement(
                         'script',

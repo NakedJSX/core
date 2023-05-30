@@ -56,10 +56,7 @@ class Element
 
     get id()
     {
-        if (this.#id)
-            return this.#id;
-        
-        throw 'Element has no id';
+        return this.#id;
     }
 
     get tagName()

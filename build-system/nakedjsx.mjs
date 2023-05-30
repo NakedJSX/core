@@ -61,7 +61,6 @@ export class NakedJSX
 
     #developmentMode;
     #developmentServer;
-    #developmentClientJs;
 
     #srcDir;
     #dstDir;
@@ -345,8 +344,12 @@ ${feebackChannels}
 
         await this.processConfig();
 
-        this.#developmentServer     = new DevServer({ serverRoot: this.#dstDir });
-        this.#developmentClientJs   = fs.readFileSync(path.join(nakedJsxSourceDir, 'dev-client-injection.js')).toString();
+        this.#developmentServer =
+            new DevServer(
+                {
+                    serverRoot:     this.#dstDir,
+                    clientJsFile:   path.join(nakedJsxSourceDir, 'dev-client-injection.js')
+                });
 
         this.#startWatchingFiles();
 
@@ -708,6 +711,8 @@ ${feebackChannels}
                 scopedCssSet:   new ScopedCssSet(),
                 config:
                     {
+                        uniquePrefix: '_', // Used by Page.UniqueId()
+                        uniqueSuffix: '',  // Used by Page.UniqueId()
                         client:
                             {
                                 js: { inline: true }
@@ -1569,53 +1574,49 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
     {
         const { thisBuild } = page;
 
-        const input = [];
-        const inputSourcemapRemap = {};
+        if (!page.clientJsFileIn && !thisBuild.inlineJs.length)
+            return;
 
-        if (page.clientJsFileIn)
-            input.push(page.clientJsFileIn);
+        //
+        // Although we have a unique folder name, it seems we also need a unique
+        // filename to work around vscode breakpoint binding bugs when repeatedly
+        // dynamically import()ing.
+        //
 
-        if (thisBuild.inlineJs.length)
+        const inlineJsFilename      = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
+        const tmpSrcFile            = this.#versionedTmpFilePath(inlineJsFilename);
+        const inputSourcemapRemap   = {};
+
+        function semicolonify(js)
         {
-            //
-            // Although we have a unique folder name, it seems we also need a unique
-            // filename to work around vscode breakpoint binding bugs when repeatedly
-            // dynamically import()ing.
-            //
-
-            const inlineJsFilename  = page.htmlFile.replace(/.[^.]+$/, '-page-inline.mjs');
-            const tmpSrcFile        = this.#versionedTmpFilePath(inlineJsFilename);
-
-            // Ensure each inline js ends with ';' before joining
-            const inlineJs =
-                thisBuild.inlineJs
-                    .map(
-                        js =>
-                        {
-                            js = js.trim();
-                            if (js.endsWith(';'))
-                                return js;
-                            else
-                                return `${js};`;
-                        })
-                    .join('\n\n');
-
-            // Make inline source look like it came from src/<page>-page-inline.mjs'
-            inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
-
-            this.#ignoreWatchFile(tmpSrcFile);
-            await fsp.writeFile(tmpSrcFile, inlineJs);
-
-            input.push(tmpSrcFile);
+            if (js.trim().endsWith(';'))
+                return js;
+            else
+                return `${js};`;
         }
 
-        if (!input.length)
-            return;
+        // Ensure each inline js ends with ';' before joining
+        const inlineJs =
+            thisBuild.inlineJs
+                .map(js => semicolonify(js))
+                .join('\n\n');
+
+        // Make inline source look like it came from src/<page>-page-inline.mjs'
+        inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
+
+        this.#ignoreWatchFile(tmpSrcFile);
+        if (page.clientJsFileIn)
+        {
+            const clientJs = (await fsp.readFile(page.clientJsFileIn)).toString();
+            await fsp.writeFile(tmpSrcFile, semicolonify(clientJs) + '\n' + inlineJs);
+        }
+        else
+            await fsp.writeFile(tmpSrcFile, inlineJs);
 
         const inputOptions =
             {
-                input,
-                plugins: this.#rollupPlugins.input.client
+                input:      tmpSrcFile,
+                plugins:    this.#rollupPlugins.input.client
             };
 
         //
@@ -1666,7 +1667,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             {
                 entryFileNames: `${page.htmlFile}.[hash:64].js`,
                 format: 'cjs',
-                manualChunks: () => 'this name is not used but is needed',
                 sourcemap: this.#developmentMode ? 'inline' : false,
                 sourcemapPathTransform:
                     (relativeSourcePath, sourcemapPath) =>
@@ -1835,7 +1835,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 .run(
                     {
                         developmentMode:        this.#developmentMode,
-                        developmentJsInjection: this.#developmentClientJs,
                         commonCss:              this.#commonCss,
                         page,
                         onRenderStart,
