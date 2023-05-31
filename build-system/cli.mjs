@@ -219,7 +219,7 @@ Options:
 ${optionsHelp}
 Detailed documentation:
 
-    https://nakedjsx.org/documentation`
+    https://nakedjsx.org/documentation/`
         );
 }
 
