@@ -158,3 +158,11 @@ export function camelToKebabCase(camel)
 {
     return camel.replace(/[A-Z]/g, char => '-' + char.toLowerCase());
 }
+
+export function semicolonify(js)
+{
+    if (js.trim().endsWith(';'))
+        return js;
+    else
+        return `${js};`;
+}

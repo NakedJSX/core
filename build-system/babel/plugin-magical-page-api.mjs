@@ -1,3 +1,6 @@
+import { default as generator } from '@babel/generator'
+const generate = generator.default;
+
 //
 // 1. Ensure calls to async Page functions are awaited.
 //
@@ -7,16 +10,11 @@
 //     It also keeps the API nice and clean, and the approach allows us to make
 //     other calls transparently async later without breaking existing projects.
 //
-// 2. Where possible, convert code passed to Page.AppendJS to a string
+// 2. Convert JavaScript code passed directly to Page.AppendJs() to a string.
 //
-//     Code located inside page JS and then added as client JS is first compiled
-//     for use in a page, then compiled again for the client. Although this works,
-//     the downside is that JSX code has already been transformed into __nakedjsx__
-//     calls by the time the client build process happens, and so the original
-//     JSX is not visible in a browser debugger, only the __nakedjsx__ calls.
-//
-//     By preprocessing this code to a string, which Page.AppendJS also accepts,
-//     we bypass the first page JS compilation step for that code.
+//     Get syntax highlighting for snippets of page JavaScript code passed to
+//     Page.AppendJs() (vs using a string). The resulting string of code is later
+//     compiled for inclusion in the final page for the browser to run.
 //
 
 export default function(babel)
@@ -88,85 +86,144 @@ export default function(babel)
                         return;
                     }
 
-                    if (callee.property.name === 'AppendJs')
+                    if (callee.property.name === 'AppendJs' || callee.property.name === 'AppendJsIfNew')
                     {
-                        const argumentsPath = nodePath.get('arguments');
-                        if (argumentsPath.length != 1)
-                            throw nodePath.buildCodeFrameError("Page.AppendJs currently only supports one argument");
-                        
-                        const argumentPath = nodePath.get('arguments.0');
-                        const { node: argumentNode } = argumentPath;
-
-                        if (argumentPath.node.type === 'Identifier')
-                        {
-                            //
-                            // Page.AppendJs() has been passed a function or a variable variable.
-                            //
-                            // If we can unambigiously find its value, and that
-                            // value is a function, replace it with a string
-                            // containing the source code of that function.
-                            //
-
-                            const binding = nodePath.scope.getBinding(argumentNode.name);
-                            if (binding?.path?.type === 'FunctionDeclaration')
-                            {
-                                //
-                                // A named function has been passed by name.
-                                // Replace with a string containing the source code for that function.
-                                //
-
-                                nodePath.node.arguments = [t.stringLiteral(binding.path.toString())];
-                            }
-
-                            //
-                            // We could add support for const variables that point to functions
-                            // but it seems a bit pointless when the function could just be passed directly.
-                            //
-
-                            return;
-                        }
-
-                        if (argumentNode.type === 'FunctionExpression' && argumentNode.id)
-                        {
-                            //
-                            // Page.AppendJs() has been passed a named function in full:
-                            //
-                            //     Page.AppendJs(function namedFunction() { ... });
-                            //
-                            // We replace this with a string containing the source code of the function.
-                            //
-
-                            nodePath.node.arguments = [t.stringLiteral(argumentPath.toString())];
-
-                            return;
-                        }
-
-                        if (argumentNode.type === 'FunctionExpression' || argumentNode.type === 'ArrowFunctionExpression')
-                        {
-                            //
-                            // Page.AppendJs() has been passed an anon or arrow function:
-                            //
-                            //     Page.AppendJs(function() { ... });
-                            //     Page.AppendJs(() => { ... });
-                            //
-                            // In either case it doesn't make sense to add either of these
-                            // to the top level scope as-is as they'd never be invoked.
-                            //
-                            // However, we can make use of this syntax to add the whole body
-                            // of the function to the top level scope.
-                            //
-
-                            const conciseBodyJs =
-                                argumentPath
-                                    .get('body')
-                                    .get('body')
-                                    .map(statement => statement.toString())
-                                    .join('');
-
-                            nodePath.node.arguments = [t.stringLiteral(conciseBodyJs)];
-                        }                     
+                        handleAppendJs(nodePath);
+                        return;
                     }
                 }
             }
         };
-};
+
+    /**
+     * All arguments passed to Page.AppendJs() / Page.AppendJsIfNew() are converted
+     * to strings containing JavaScript source code.
+     */
+    function handleAppendJs(nodePath)
+    {
+        const resultingJs = nodePath.get('arguments').map(handleAppendJsArgument.bind(null, nodePath.scope));
+
+        nodePath.node.arguments = resultingJs;
+    }
+
+    function handleAppendJsArgument(scope, path)
+    {
+        if (path.isStringLiteral())
+            return path.node;
+        
+        if (path.isTemplateLiteral())
+            return path.node;
+
+        if (path.isFunctionExpression() && path.node.id)
+        {
+            //
+            // Page.AppendJs() has been passed a named function in full:
+            //
+            //     Page.AppendJs(function namedFunction() { ... });
+            //
+            // We replace this with a string containing the source code of the function.
+            //
+            // Any more FunctionExpressions we assume to be anon
+            //
+
+            return t.stringLiteral(path.toString());
+        }
+
+        if (path.isFunctionExpression() || path.isArrowFunctionExpression())
+        {
+            //
+            // Page.AppendJs() has been passed an anon or arrow function:
+            //
+            //     Page.AppendJs(function() { ... });
+            //     Page.AppendJs(() => { ... });
+            //
+            // In either case it doesn't make sense to add either of these
+            // to the top level scope as-is as they'd never be invoked.
+            //
+            // However, we can make use of this syntax to add the whole body
+            // of the function to the top level scope.
+            //
+
+            const body = path.get('body');
+
+            if (body.isBlockStatement())
+            {
+                const conciseBodyJs =
+                    body.get('body')
+                        .map(statement => statement.toString())
+                        .join('');
+
+                return t.stringLiteral(conciseBodyJs);
+            }
+            else
+                // probably something like () => someFunc()
+                return t.stringLiteral(body.toString());
+        }
+
+        if (path.isIdentifier())
+        {
+            //
+            // Page.AppendJs() has been passed a function or variable identifier.
+            //
+            // If we can unambigiously find its value, and that
+            // value is a function, replace it with a string
+            // containing the source code of that function.
+            //
+
+            const binding = scope.getBinding(path.node.name);
+
+            if (!binding)
+                throw path.buildCodeFrameError(`Something isn't right with this, please let the NakedJSX team know what you're doing`);
+
+            if (binding.path.isFunctionDeclaration())
+            {
+                //
+                // A named function has been passed by its identifier.
+                // Replace with a string containing the source code for that function.
+                //
+
+                return t.stringLiteral(binding.path.toString());
+            }
+
+            //
+            // Check for a const that points to an anon or arrow function.
+            //
+            // This allows code like:
+            //
+            //     const Tag =
+            //         () =>
+            //         <p>
+            //            some tag
+            //         </p>
+            //
+            // or:
+            //
+            //     const Tag =
+            //         function()
+            //         {
+            //             return <p>some tag</p>
+            //         }
+            //
+            // To be passed to client JS using:
+            //
+            //     Page.AppendJs(Tag);
+            //
+
+            if (binding.path.isVariableDeclarator())
+            {
+                if (!path.isConstantExpression())
+                    throw path.buildCodeFrameError(`Identifiers passed to Page.AppendJs must be const.`);
+                
+                const value = binding.path.get('init');
+
+                if (value.isArrowFunctionExpression() || value.isFunctionExpression())
+                    return t.stringLiteral(generate(t.variableDeclaration('const', [binding.path.node])).code);
+                else
+                    throw path.buildCodeFrameError(`Identifiers passed to Page.AppendJsx must be initialised with a function`);
+            }
+        }
+        
+        // By default, just convert to the code to a string representation and return it as a StringLiteral node
+        return t.stringLiteral(path.toString());
+    }
+}

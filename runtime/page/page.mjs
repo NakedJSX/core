@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { finaliseCssClasses } from '../../build-system/css.mjs';
 import { ServerDocument } from './document.mjs';
-import { convertToAlphaNum } from '../../build-system/util.mjs';
+import { convertToAlphaNum, semicolonify } from '../../build-system/util.mjs';
 
 const interBuildCache   = new Map();
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -176,20 +176,22 @@ function createElement(tag, props, children)
     // and also that the function names can be mangled.
     //
 
-    // It will need an id to hook up the handler
     if (eventHandlers.length)
+    {
+        // It will need an id to hook up the handler
         if (element.id === undefined)
             element.setAttribute('id', Page.UniqueId());
 
-    for (const { name, value } of eventHandlers)
-    {
-        const onEvent = name.toLowerCase();
-        Page.AppendJs(
-`(()=>{
-    var e = document.getElementById(${JSON.stringify(element.id)});
-    e.${onEvent} = (function(event) { ${value} }).bind(e);
-})()`
-            );
+        let js = `  var e = document.getElementById(${JSON.stringify(element.id)});\n`;
+
+        for (const { name, value } of eventHandlers)
+        {
+            const onEvent = name.toLowerCase();
+            // wrap the code with a function that sets 'this' and 'event' to expected values
+            js += `  e.${onEvent} = (function(event) { ${value} }).bind(e);\n`;
+        }
+        
+        Page.AppendJs(`(()=>{\n${js}})()`);
     }
 
     children.forEach((child) => element.appendChild(renderNow(child)));
@@ -226,6 +228,25 @@ function renderNow(deferredRender)
     else
         // Convert anything else, number etc, to a string
         return `${deferredRender}`
+}
+
+function hasAddedClientJs(clientJs)
+{
+    const thisBuild = getCurrentJob().page.thisBuild;
+
+    return thisBuild.inlineJsSet.has(clientJs);
+}
+
+function addClientJs(clientJs)
+{
+    const thisBuild = getCurrentJob().page.thisBuild;
+
+    //
+    // Add this JS and remember we did.
+    //
+
+    thisBuild.inlineJsSet.add(clientJs);
+    thisBuild.inlineJs.push(clientJs);
 }
 
 /**
@@ -323,58 +344,48 @@ export const Page =
         },
 
         /**
-         * If it hasn't been added already, add JavaScript code to the page.
-         * @param {function|string} js - JavaScript code to be added.
-         * @param {object} [options] - Alter behavior of AppendJs()
-         * @param {object} [options.allowDuplicate] - Set to true to allow adding code that's been added before on this page
+         * Add one or more JavaScript statement to the page. A statement can be actual Javascript code, or a string containing it.
+         * @param {...object} jsCode - JavaScript code, or string containing it, to be added
          */
-        AppendJs(js, { allowDuplicate } = {})
+        AppendJs(...jsCode)
         {
-            //
-            // Convert any remaining function objects to string.
-            // Hopefully they have been converted to strings by
-            // the page page api babel plugin.
-            //
+            const resultingJs = jsCode.map(semicolonify).join('\n');
             
-            const jsString = `${js}`;
+            addClientJs(resultingJs);
+        },
 
-            const { thisBuild } = getCurrentJob().page;
+        /**
+         * If it hasn't been added already, add JavaScript code to the page.
+         * @param {...object} jsCode - JavaScript code to be added. More than one arg is magically converted to one by a babel plugin.
+         */
+        AppendJsIfNew(...jsCode)
+        {
+            const resultingJs = jsCode.map(semicolonify).join('\n');
 
-            if (thisBuild.inlineJsSet.has(jsString))
-            {
-                //
-                // We've already added this JS to the page
-                // but add it anyway if duplicates are allowed.
-                //
-
-                if (allowDuplicate)
-                    thisBuild.inlineJs.push(jsString);
-            }
-            else
-            {
-                //
-                // Remember that we have added this JS, then add it.
-                //
-
-                thisBuild.inlineJsSet.add(jsString);
-                thisBuild.inlineJs.push(jsString);
-            }
+            if (hasAddedClientJs(resultingJs)) // already added this combination of js before
+                return;
+            
+            addClientJs(resultingJs);
         },
 
         /**
          * Add client JS that invokes function with the supplied arguments.
-         * @param {string} functionName - name of function to invoke in client JS.
+         * @param {function|string} functionName - name of function to invoke in client JS.
+         * @param {...object} args - zero or more arguments to evaluate at build time and pass the result to the function at client run time.
          */
         AppendJsCall(functionName, ...args)
         {
+            if (typeof functionName === 'function')
+                functionName = functionName.name;
+
             if (typeof functionName !== 'string')
-                throw Error(`Argument passed to AppendJsCall is not a string: ${functionName}`);
+                throw Error(`Argument passed to AppendJsCall is not a string or a named function: ${functionName}`);
             
             functionName = functionName.trim();
             if (functionName === '')
                 throw Error(`AppendJsCall functionName is empty`);
 
-            this.AppendJs(`${functionName}(${args.map(arg => JSON.stringify(arg))})`, { allowDuplicate: true });
+            this.AppendJs(`${functionName}(${args.map(arg => JSON.stringify(arg))})`);
         },
 
         /**
@@ -555,6 +566,16 @@ export const Page =
             }
 
             return cache;
+        },
+
+        ////
+
+        /**
+         * Is this a development mode build?
+         */
+        IsDevelopmentMode()
+        {
+            return getCurrentJob().developmentMode;
         }
     };
     

@@ -18,7 +18,7 @@ import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark } from './util.mjs';
+import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark, semicolonify } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import { assetUriPathPlaceholder } from '../runtime/page/document.mjs'
 import { runWithPageAsyncLocalStorage } from '../runtime/page/page.mjs';
@@ -524,7 +524,9 @@ ${feebackChannels}
         else
             throw new Error(`Bad page js file type ${match.page.type} for page ${match.uriPath}`);
         
-        this.#enqueuePageBuild(page);
+        // If it still has a page JS file, rebuild it
+        if (page.htmlJsFileIn)
+            this.#enqueuePageBuild(page);
     }
 
     #matchPageJsFile(filename)
@@ -1586,14 +1588,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         const tmpSrcFile            = this.#versionedTmpFilePath(inlineJsFilename);
         const inputSourcemapRemap   = {};
 
-        function semicolonify(js)
-        {
-            if (js.trim().endsWith(';'))
-                return js;
-            else
-                return `${js};`;
-        }
-
         // Ensure each inline js ends with ';' before joining
         const inlineJs =
             thisBuild.inlineJs
@@ -1914,7 +1908,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             "max_preserve_newlines": "-1",
                             "preserve_newlines": false,
                             "keep_array_indentation": false,
-                            "break_chained_methods": false,
+                            "break_chained_methods": true,
                             "indent_scripts": "normal",
                             "brace_style": "collapse",
                             "space_before_conditional": true,
