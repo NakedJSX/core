@@ -6,6 +6,7 @@ import { log, warn, convertToBase } from "../build-system/util.mjs";
 
 const postcssProcessor  = postcss(postcssNested);
 const loadCssCache      = new Map();
+const reserveCssCache   = new Map();
 
 export class ScopedCssSet
 {
@@ -141,15 +142,29 @@ export class ScopedCssSet
         // manually predefined in the common js.
         //
 
+        let cacheResult = reserveCssCache.get(commonCss);
+        if (cacheResult)
+        {
+            for (const reservedClass of cacheResult)
+                reserved.add(reservedClass);
+            
+            return;
+        }
+
+        cacheResult = [];
+
         syntax.walk(
             syntax.parse(commonCss),
             {
                 visit: 'ClassSelector',
                 enter(node, item, list)
                 {
+                    cacheResult.push(node.name);
                     reserved.add(node.name);
                 }
             });
+        
+        reserveCssCache.set(commonCss, cacheResult)
     }
 }
 
