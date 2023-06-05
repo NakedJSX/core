@@ -682,6 +682,9 @@ ${feebackChannels}
 
         if (this.#commonCssFile)
             this.#addWatchFile(this.#commonCssFile, page);
+        
+        if (page.clientJsFileIn)
+            this.#addWatchFile(page.clientJsFileIn, page);
 
         //
         // Create an abort controller for graceful failure during the process
