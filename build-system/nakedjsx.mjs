@@ -1739,6 +1739,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         if (chunks.length)
         {
             const chunk = chunks[0];
+            chunk.code = chunk.code.trim();
 
             if (thisBuild.config.client.js.inline)
                 thisBuild.output.inlineJs.push(chunk.code);
