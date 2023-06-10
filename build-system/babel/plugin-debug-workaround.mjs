@@ -30,11 +30,9 @@ export default function(babel)
                     //
                     // Place the following code at the start of the program:
                     //
-                    //     /* Hack: give vscode time to connect breakpoints for dynamic import ... */
+                    //     // Hack: give vscode time to connect breakpoints for dynamic import ...
                     //     await new Promise(resolve => setTimeout(resolve, 25));
                     //
-
-                    nodePath.addComment('leading', ' Hack: give vscode time to connect breakpoints for dynamic import ... ');
 
                     const delayCode =
                         t.arrowFunctionExpression(
@@ -44,9 +42,8 @@ export default function(babel)
                                 [t.identifier('resolve'), t.numericLiteral(25)]
                                 )
                             );
-                    
-                    nodePath.unshiftContainer(
-                        'body',
+
+                    const awaitExpression =
                         t.expressionStatement(
                             t.awaitExpression(
                                 t.newExpression(
@@ -54,8 +51,11 @@ export default function(babel)
                                     [delayCode]
                                     )
                                 )
-                            )
-                        );
+                            );
+                    
+                    t.addComment(awaitExpression, 'leading', ' Hack: give vscode time to connect breakpoints for dynamic import ...', true);
+                    
+                    nodePath.unshiftContainer('body', awaitExpression);
                 },
             }
         };
