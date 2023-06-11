@@ -1,8 +1,7 @@
 //
-// Wrap Element.appendChild so that it can add an array of elements.
-// This allows a JSX fragment to be passed to appendChild.
-//
-// Also add support for adding a string as a text node.
+// Wrap Element.appendChild() so that it can add an array of elements,
+// which allows a JSX fragment to be passed to appendChild.
+// Additionally, strings are converted to text nodes.
 //
 
 const originalAppendChild = Element.prototype.appendChild;
@@ -10,17 +9,14 @@ Element.prototype.appendChild =
     function(child)
     {
         if (Array.isArray(child))
+        {
             for (const childArrayMember of child)
                 this.appendChild(childArrayMember);
+        }
+        else if (typeof child === 'string')
+            originalAppendChild.call(this, document.createTextNode(child));
         else
-        {
-            const boundAppendChild = originalAppendChild.bind(this);
-
-            if (typeof child === 'string')
-                boundAppendChild(document.createTextNode(child));
-            else
-                boundAppendChild(child);
-        } 
+            originalAppendChild.call(this, child);
     };
 
 export function __nakedjsx__createElement(tag, props, ...children)
@@ -56,8 +52,9 @@ export function __nakedjsx__createElement(tag, props, ...children)
             else
                 element.setAttribute(name, value);
         });
-
-    children.forEach((child) => element.appendChild(child));
+    
+    for (const child of children)
+        element.appendChild(child);
 
     return element;
 }
