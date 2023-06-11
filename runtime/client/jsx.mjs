@@ -2,19 +2,25 @@
 // Wrap Element.appendChild so that it can add an array of elements.
 // This allows a JSX fragment to be passed to appendChild.
 //
+// Also add support for adding a string as a text node.
+//
 
 const originalAppendChild = Element.prototype.appendChild;
 Element.prototype.appendChild =
     function(child)
     {
-        const boundAppendChild = originalAppendChild.bind(this);
         if (Array.isArray(child))
             for (const childArrayMember of child)
                 this.appendChild(childArrayMember);
-        else if (typeof child === 'string')
-            boundAppendChild(document.createTextNode(child));
         else
-            boundAppendChild(child);
+        {
+            const boundAppendChild = originalAppendChild.bind(this);
+
+            if (typeof child === 'string')
+                boundAppendChild(document.createTextNode(child));
+            else
+                boundAppendChild(child);
+        } 
     };
 
 export function __nakedjsx__createElement(tag, props, ...children)
@@ -38,8 +44,13 @@ export function __nakedjsx__createElement(tag, props, ...children)
     Object.entries(props).forEach(
         ([name, value]) =>
         {
-            if (typeof window !== 'undefined' && name.startsWith('on') && name.toLowerCase() in window)
-                element.addEventListener(name.toLowerCase().substring(2), value);
+            if (name.startsWith('on'))
+            {
+                const lowercaseName = name.toLowerCase();
+                
+                if (lowercaseName in window)
+                    element.addEventListener(lowercaseName.substring(2), value);
+            }
             else if (name === 'className')
                 element.setAttribute('class', value);
             else
