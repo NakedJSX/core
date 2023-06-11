@@ -98,7 +98,10 @@ const options =
                 deprecatedAlias: ['--output-dir'],
                 impl(config, { path })
                 {
-                    config.outputDir = configPath(path)
+                    if (config.output)
+                        config.output.dir = configPath(path);
+                    else
+                        config.output = { dir: configPath(path) };
                 }
             },
 
