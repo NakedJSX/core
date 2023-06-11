@@ -53,8 +53,14 @@ export default function(babel)
                                 )
                             );
                     
-                    t.addComment(awaitExpression, 'leading', ' Hack: give vscode time to connect breakpoints for dynamic import ...', true);
-                    
+                    t.addComments(
+                        awaitExpression,
+                        'leading',
+                        [
+                            { type: "CommentLine", value: ' HACK: Attached debugger detected at build time, give vscode time to connect breakpoints for dynamic import ...' },
+                            { type: "CommentLine", value: '  see: https://github.com/microsoft/vscode-js-debug/issues/1510#issuecomment-1560510140' }
+                        ]);
+        
                     nodePath.unshiftContainer('body', awaitExpression);
                 },
             }
