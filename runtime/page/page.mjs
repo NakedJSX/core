@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { finaliseCssClasses } from '../../build-system/css.mjs';
 import { ServerDocument } from './document.mjs';
-import { convertToAlphaNum, semicolonify } from '../../build-system/util.mjs';
+import { convertToAlphaNum, log, semicolonify } from '../../build-system/util.mjs';
 
 const interBuildCache   = new Map();
 const asyncLocalStorage = new AsyncLocalStorage();
@@ -313,6 +313,8 @@ export const Page =
          */
         Create(lang)
         {
+            getCurrentJob().page.thisBuild.onPageCreate();
+
             setDocument(new ServerDocument(lang));
         },
 
@@ -425,10 +427,15 @@ export const Page =
          */
         async Render(outputFilename)
         {
-            const { page, commonCss, onRenderStart, onRendered, developmentMode } = getCurrentJob();
+            const { page, commonCss, onRenderStart, onRendered, developmentMode, templateEngineMode } = getCurrentJob();
 
             if (outputFilename)
+            {
+                if (templateEngineMode)
+                    throw new Error(`Can't specify page filename in template engine mode.`);
+                
                 outputFilename = path.join(path.dirname(page.htmlFile), outputFilename);
+            }
             else
                 outputFilename = page.htmlFile;
 
@@ -531,7 +538,7 @@ export const Page =
                     page.outputAssetRoot);
 
             //
-            // Render the document to HTML and pass result back to the build thread.
+            // Render the document to HTML and pass result back
             //
 
             onRendered(getDocument().toHtml({ relativeAssetRoot }));
@@ -549,7 +556,20 @@ export const Page =
             return path.join(getCurrentJob().page.outputDir, relativeOutputPath);
         },
 
+        /**
+         * Get the full uri path for a path relative to the output directory for this page
+         */
+        GetOutputUri(relativeOutputPath)
+        {
+            return getCurrentJob().page.uriPath + relativeOutputPath.split(path.sep).join('/');
+        },
+
         ////
+
+        Log(...args)
+        {
+            log(...args);
+        },
 
         /**
          * Object a named Map that persists between builds, useful for tag content caching.

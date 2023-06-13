@@ -3,8 +3,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import inspector from 'node:inspector'
 import querystring from 'node:querystring';
+import EventEmitter from 'node:events';
 
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
@@ -17,8 +18,7 @@ import inject from '@rollup/plugin-inject';
 import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
-import { mapCachePlugin } from './rollup/plugin-map-cache.mjs';
-import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark, semicolonify } from './util.mjs';
+import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark, semicolonify, merge } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
 import { assetUriPathPlaceholder } from '../runtime/page/document.mjs'
 import { runWithPageAsyncLocalStorage } from '../runtime/page/page.mjs';
@@ -29,9 +29,35 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 
 //
 // We are using createRequire(..).resolve to allow babel to find plugins under yarn pnp.
+// But it's slow (~5ms) and doesn't cache internally.
 //
 
-const resolveModule = createRequire(import.meta.url).resolve;
+const resolveModule =
+    ((id) =>
+    {
+        const nodeResolveModule = createRequire(import.meta.url).resolve;
+        const cache = new Map();
+
+        function resolve(id)
+        {
+            let resolved = cache.get(id);
+            if (resolved)
+                return resolved;
+            
+            resolved = nodeResolveModule(id);
+            cache.set(id, resolved);
+
+            return resolved;
+        }
+
+        return resolve;
+    })();
+
+//
+// We'll create a directory called this, for creation and deletion of temporary files.
+//
+
+const nakedJsxTmpDirName = '.__nakedjsx__tmp';
 
 //
 // We make a 'current job' object available to page code being rendered.
@@ -52,15 +78,23 @@ export const emptyConfig =
         definitions:                {},
         browserslistTargetQuery:    'defaults',
         plugins:                    {},
-        importResolveOverrides:     {}
+        importResolveOverrides:     {},
+        output:
+            {
+                pageJs:             { sourcemaps: 'auto' },
+                clientJs:           { sourcemaps: 'auto' }
+            }
     };
 
-export class NakedJSX
+export class NakedJSX extends EventEmitter
 {
     #config;
 
     #developmentMode;
     #developmentServer;
+
+    #templateEngineMode;
+    #templateEnginePathHandlers;
 
     #srcDir;
     #dstDir;
@@ -69,6 +103,9 @@ export class NakedJSX
     #tmpRoot;
     #tmpDir;
     #tmpDirVersion          = -1;
+
+    #pageJsSourceMaps       = false;
+    #clientJsSourceMaps     = false;
 
     #commonCssFile;
     #commonCss;
@@ -89,12 +126,10 @@ export class NakedJSX
 
     #watcher;
     #watchFiles             = new Map(); // filename -> Set<page>
-    #watchFilesIgnore;
 
     #rollupPlugins;
 
-    #terserCache            = new Map();
-    #babelInputCache        = new Map();
+    #clientJsRollupCache    = new Map();
 
     //
     // This cache is used internally by our import plugin.
@@ -109,12 +144,12 @@ export class NakedJSX
 
     #importLoadCache        = new Map();
 
-    constructor(
-        rootDir,
-        {
-            configOverride
-        } = {})
+    constructor(rootDir, { configOverride } = {})
     {
+        super();
+
+        log.quiet = !!configOverride?.quiet;
+
         log.setPrompt('Initialising ...');
         log(`NakedJSX ${packageInfo.version} initialising (Node ${process.version})`);
 
@@ -141,14 +176,14 @@ export class NakedJSX
 
         if (configOverride)
         {
-            Object.assign(this.#config, configOverride);
+            merge(this.#config, configOverride);
         }
         else if (fs.existsSync(configFilePath))
         {
             log(`Loading ${configFilePath}`);
             try
             {
-                Object.assign(this.#config, JSON.parse(fs.readFileSync(configFilePath)));
+                merge(this.#config, JSON.parse(fs.readFileSync(configFilePath)));
             }
             catch(error)
             {
@@ -158,29 +193,54 @@ export class NakedJSX
         else
             log(`No config file ${configFilePath}, using default config`);
 
+        // Potentially update the log quiet setting.
+        // TODO: avoid general double processing of the config when used via CLI
+        log.quiet = !!this.#config.quiet;
+
         // Definitions might be sensitive, so mask them when dumping the effective config
         const redactedConfig = jsonClone(JSON.parse(JSON.stringify(this.#config)));
 
         for (const key in redactedConfig.definitions)
             redactedConfig.definitions[key] = '****';
 
-        this.#config.quiet || log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
+        log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
+    }
+
+    absolutePathFromConfig(relativeOrAbsolute)
+    {
+        //
+        // Config paths are either absolute or relative to srcDir
+        //
+
+        if (path.isAbsolute(relativeOrAbsolute))
+            return relativeOrAbsolute;
+        else
+            return path.join(this.#srcDir, relativeOrAbsolute);
     }
 
     async processConfig()
     {
-        const builder = this;
+        const self   = this;
         const config = this.#config;
 
         //
         // Source and destination directories
         //
 
-        if (!config.outputDir)
-            fatal("Config is missing required 'outputDir' and --out wasn't passed on CLI.");
+        if (config.outputDir) // deprecated config
+        {
+            if (config.output.dir)
+                fatal("Config contains both 'output.dir' and deprecated 'outputDir' - please remove outputDir");
+            
+            config.output.dir = config.outputDir;
+            delete config.outputDir;
+        }
 
-        this.#dstDir = path.join(this.#srcDir, config.outputDir);
-    
+        if (!config.output?.dir)
+            fatal("Config is missing required 'output.dir' and --out wasn't passed on CLI.");
+        
+        this.#dstDir = this.absolutePathFromConfig(config.output.dir);
+
         if (this.#dstDir.startsWith(this.#srcDir + path.sep))
             fatal(`Output dir (${this.#dstDir}) must not be within the pages root dir (${this.#srcDir}).`);
 
@@ -189,9 +249,58 @@ export class NakedJSX
             log(`Creating output dir: ${this.#dstDir}`);
             fs.mkdirSync(this.#dstDir, { recursive: true });
         }
+
+        //
+        // Output dir for generated assets
+        //
+
+        if (!config.output.assetDir)
+            config.output.assetDir = 'asset';
         
-        this.#dstAssetDir   = path.join(this.#dstDir, 'asset');
-        this.#tmpRoot       = path.join(this.#dstDir, '.__nakedjsx__tmp');
+        if (path.isAbsolute(config.output.assetDir))
+            this.#dstAssetDir = config.output.assetDir;
+        else
+            this.#dstAssetDir = path.join(this.#dstDir, config.output.assetDir);
+
+        if (!this.#dstAssetDir.startsWith(this.#dstDir + path.sep) && this.#dstAssetDir !== this.#dstDir)
+            fatal(`Output asset dir (${this.#dstAssetDir}) must be under or equal to dst dir (${this.#dstDir}).`);
+
+        //
+        // Sourcemaps default on when a a debugger is attached,
+        // and for client JS, in development mode.
+        //
+
+        const validSourcemapsValues = ['auto', 'disable', 'enable'];
+
+        if (!validSourcemapsValues.includes(config.output.pageJs.sourcemaps))
+            fatal(`Bad config value '${config.output.pageJs.sourcemaps}' for output.pageJs.sourcemaps. Valid values are ${validSourcemapsValues.join()}`);
+
+        if (!validSourcemapsValues.includes(config.output.clientJs.sourcemaps))
+            fatal(`Bad config value '${config.output.clientJs.sourcemaps}' for output.clientJs.sourcemaps. Valid values are ${validSourcemapsValues.join()}`);
+
+        function shouldEnableSourcemaps(setting)
+        {
+            if (setting === 'disable')
+                return false;
+            if (setting === 'enable')
+                return true;
+            if (setting === 'auto')
+                return !!(inspector.url() || self.#developmentMode)
+
+            fatal(`Unexpected config source map value: ${setting}`);
+        }
+
+        this.#pageJsSourceMaps      = shouldEnableSourcemaps(config.output.pageJs.sourcemaps);
+        this.#clientJsSourceMaps    = shouldEnableSourcemaps(config.output.clientJs.sourcemaps);
+
+        //
+        // tmp defaults to inside the output dir
+        // 
+
+        if (!config.output.tmpDir)
+            config.output.tmpDir = this.#dstDir;
+        
+        this.#tmpRoot = path.join(this.absolutePathFromConfig(config.output.tmpDir), nakedJsxTmpDirName);
 
         //
         // Process path aliases
@@ -199,7 +308,7 @@ export class NakedJSX
 
         for (const [alias, destination] of Object.entries(config.pathAliases))
         {
-            const absPath = path.join(this.#srcDir, destination);
+            const absPath = this.absolutePathFromConfig(destination);
             if (!fs.existsSync(absPath))
                 fatal(`Source import path ${absPath} for alias ${alias} does not exist`);
 
@@ -244,7 +353,7 @@ export class NakedJSX
         // Copy definitiions
         //
 
-        Object.assign(this.#definitions, config.definitions);
+        merge(this.#definitions, config.definitions);
 
         //
         // Register plugins
@@ -303,6 +412,7 @@ NOTE: Things subject to change until version 1.0.0,
 Roadmap:
 
 - Incorporate feedback
+- Don't allow unbounded cache growth
 - TypeScript in page source
 - Integrated http proxy
 - ImageMagick support in @nakedjsx/plugin-asset-image
@@ -313,7 +423,6 @@ Under consideration:
 
 - Client JSX ref support
 - Client JSX context support
-- Ability for page JS to make refs available to client JS
 - Support Deno / dpx
 
 All feedback is appreciated:
@@ -325,7 +434,7 @@ ${feebackChannels}
 
     exit()
     {
-        this.#config.quiet || this.#logFinalThoughts();
+        this.#logFinalThoughts();
 
         process.exit(0);
     }
@@ -340,6 +449,7 @@ ${feebackChannels}
         
         this.#started               = true;
         this.#developmentMode       = true;
+        this.#templateEngineMode    = false;
 
         await this.processConfig();
 
@@ -386,12 +496,66 @@ ${feebackChannels}
         if (this.#started)
             throw Error('NakedJSX already started');
 
-        this.#started           = true;
-        this.#developmentMode   = false;
+        this.#started               = true;
+        this.#developmentMode       = false;
+        this.#templateEngineMode    = false;
 
         await this.processConfig();
 
         this.#startWatchingFiles();
+    }
+
+    /**
+     * Start a template engine
+     */
+    async templateEngine()
+    {
+        if (this.#started)
+            throw Error('NakedJSX already started');
+        
+        this.#started                       = true;
+        this.#developmentMode               = false;
+        this.#templateEngineMode            = true;
+        this.#templateEnginePathHandlers    = new Map();
+
+        await this.processConfig();
+
+        this.#startWatchingFiles();
+    }
+
+    /**
+     * Render a template engine path.
+     */
+    async templateEngineRender(uriPath, context)
+    {
+        const handler = this.#templateEnginePathHandlers.get(uriPath);
+        if (!handler)
+            throw (`@nakedjsx/express-jsx does not have a handler for uriPath: ${uriPath}`);
+
+        const htmlResult =
+            await new Promise(
+                async (resolve) =>
+                {
+                    currentJob
+                        .run(
+                            {
+                                developmentMode:    this.#developmentMode,
+                                templateEngineMode: this.#templateEngineMode,
+                                commonCss:          this.#commonCss,
+                                page:               handler.page,
+                                onRenderStart:      this.#onRenderStart.bind(this),
+                                onRendered:         html => resolve(html)
+                            },
+                            () =>
+                            {
+                                runWithPageAsyncLocalStorage(
+                                    () => handler.render(context)
+                                    );
+                            }
+                        );
+                });
+
+        return htmlResult;
     }
 
     ////////////////
@@ -405,7 +569,7 @@ ${feebackChannels}
         //
         // Watcher dedicated to looking for new pages
         //
-        
+
         this.#watcher =
             chokidar.watch(
                 './**/*',
@@ -485,7 +649,7 @@ ${feebackChannels}
         
         log(`Changed file ${fullPath} affects ${this.#numPageStr(affectedPages.size)}`);
         
-        this.#enqueuePageBuild(...affectedPages);
+        this.#enqueuePageBuild(Array.from(affectedPages));
     }
 
     #considerDeletedPageFile(filename)
@@ -501,17 +665,23 @@ ${feebackChannels}
             return;
         }
     
-        log(`Page ${match.page.htmlFile} removed ${match.type} file: ${filename}`);
-
         const page = this.#pages[match.page.uriPath];
         if (!page)
             throw new Error(`Page ${match.page.uriPath} not tracked for deleted file ${filename}?`);
+
+        log(`Page ${page.uriPath} removed ${match.type} file: ${filename}`);
 
         const fullPath = `${this.#srcDir}/${filename}`;
 
         if (match.type === 'page' || match.type === 'html')
         {
             delete page.htmlJsFileIn;
+
+            this.emit(
+                NakedJSX.Events.page_delete,
+                {
+                    uriPath:    page.uriPath
+                });
         }
         else if (match.type === 'client')
         {
@@ -563,16 +733,28 @@ ${feebackChannels}
 
         if (match.type === 'page' || match.type === 'html')
         {
-            page.htmlJsFileIn       = fullPath;
-            page.htmlJsFileOutBase  = `${this.#dstDir}/${filename}`;
+            if (page.htmlJsFileIn && page.htmlJsFileIn !== fullPath)
+            {
+                warn(`Ignoring ${fullPath} due to clash with ${page.htmlJsFileIn} for page ${page.uriPath}`);
+                return;
+            }
+            
+            page.htmlJsFileIn = fullPath;
+
+            this.emit(
+                NakedJSX.Events.page_new,
+                {
+                    uriPath:    page.uriPath,
+                    sourceFile: page.htmlJsFileIn
+                });
         }
         else if (match.type === 'client')
         {
-            page.clientJsFileIn     = fullPath;
+            page.clientJsFileIn = fullPath;
         }
         else if (match.type === 'config')
         {
-            page.configJsFile       = fullPath;
+            page.configJsFile = fullPath;
         }
         else
             throw new Error(`Bad page js file type ${match.type} for page ${match.uriPath}`);
@@ -580,8 +762,11 @@ ${feebackChannels}
         this.#enqueuePageBuild(page);
     }
 
-    #enqueuePageBuild(...pages)
+    #enqueuePageBuild(pages)
     {
+        if (!Array.isArray(pages))
+            pages = [pages];
+
         for (let page of pages)
         {
             this.#pagesToBuild.add(page);
@@ -589,6 +774,32 @@ ${feebackChannels}
             // Disconnect this page from watch file rebuilds for now
             for (let [, pages] of this.#watchFiles)
                 pages.delete(page);
+            
+            //
+            // In template engine mode, if we don't yet have a handler for this uri path then install a
+            // handler that parks requests until the build is complete. If we do have a handler,
+            // then we choose to let it continue to serve requests until the new one is compiled.
+            // 
+            // May add an option to block, but the default is to prevent slow page builds from
+            // blocking requests.
+            //
+
+            if (this.#templateEngineMode && !this.#templateEnginePathHandlers.has(page.uriPath))
+            {
+                const parkedRenders = [];
+                const pathHandler =
+                    {
+                        page,
+                        parkedRenders,
+                        render:
+                            (renderContext) =>
+                            {
+                                parkedRenders.push(new ParkedRender(renderContext));
+                            }
+                    };
+                
+                this.#templateEnginePathHandlers.set(page.uriPath, pathHandler);
+            }
         }
 
         if (this.#initialising)
@@ -608,7 +819,6 @@ ${feebackChannels}
         
         this.#building          = true;
         this.#pagesWithErrors   = new Set();
-        this.#watchFilesIgnore  = new Set();
 
         // Remove old temp files, if any
         await this.#rmTempDir();
@@ -700,7 +910,7 @@ ${feebackChannels}
                 if (reason.target.reason)
                     err(reason.target.reason.stack);
 
-                this.#onPageBuildComplete(page, true);
+                this.#onPageBuildFailure(page);
             });
         
         //
@@ -709,10 +919,6 @@ ${feebackChannels}
 
         page.thisBuild =
             {
-                nextUniqueId:   0,
-                inlineJs:       [],
-                inlineJsSet:    new Set(),
-                scopedCssSet:   new ScopedCssSet(),
                 config:
                     {
                         uniquePrefix: '_', // Used by Page.UniqueId()
@@ -721,13 +927,32 @@ ${feebackChannels}
                             {
                                 js: { inline: true }
                             }
-                    },
-                output:
-                    {
-                        inlineJs: [],
-                        fileJs:   []
                     }
             };
+        
+        //
+        // We want these values to reset between each page rendered by a file.
+        // Some page files output multiple pages, or render more than once
+        // when NakedJSX used as a template engine.
+        //
+
+        page.thisBuild.onPageCreate =
+            () =>
+            {
+                Object.assign(
+                    page.thisBuild,
+                    {
+                        nextUniqueId:   0,
+                        inlineJs:       [],
+                        inlineJsSet:    new Set(),
+                        scopedCssSet:   new ScopedCssSet(),
+                        output:
+                            {
+                                inlineJs: [],
+                                fileJs:   []
+                            }
+                    });
+            }
         
         if (page.configJsFile)
         {
@@ -757,14 +982,10 @@ ${feebackChannels}
     {
         const config =
             {
-                sourceMaps: this.#developmentMode,
+                sourceMaps: forClientJs ? this.#clientJsSourceMaps : this.#pageJsSourceMaps,
                 babelHelpers: 'inline',
-                skipPreflightCheck: this.#developmentMode,
                 plugins:
                     [
-                        // Magical source code transformations for the Page.* API.
-                        path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'),
-
                         [
                             //
                             // Allow babel to transpile JSX syntax to our injected functions.
@@ -772,12 +993,21 @@ ${feebackChannels}
                             
                             resolveModule("@babel/plugin-transform-react-jsx"),
                             {
-                                pragma:     '__nakedjsx__createElement',
-                                pragmaFrag: '__nakedjsx__createFragment'
+                                pragma:       '__nakedjsx__createElement',
+                                pragmaFrag:   '__nakedjsx__createFragment'
                             }
                         ]
                     ]
             };
+        
+        if (process.env.NODE_ENV === 'production')
+            config.skipPreflightCheck = true;
+        else
+            config.skipPreflightCheck = !(this.#developmentMode || inspector.url());
+        
+        // Magical source code transformations for the Page.* API.
+        if (!forClientJs)
+            config.plugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'));
 
         return babel(config);
     }
@@ -813,7 +1043,7 @@ ${feebackChannels}
         const hash      = this.#hashFileContent(content);
         const parsedId  = path.parse(asset.id);
         const filename  = `${parsedId.name}.${hash}${parsedId.ext}`;
-        const filepath  = `${this.#dstAssetDir}/${filename}`;
+        const filepath  = path.join(this.#dstAssetDir, filename);
         const uriPath   = `${assetUriPathPlaceholder}/${filename}`;
         const result    = `export default '${uriPath}'`;
 
@@ -1026,9 +1256,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     // If that code tries to use a package from where it came from, then it looks
                     // like NakedJSX itself it trying to import it.
                     //
-                    // Since we know this is a yarn pnp thing, we can do a cheeky CLI one-liner 
-                    // to get what we want.
-                    //
 
                     err(
                         "It looks like you're using yarn pnp, and you're going to need to\n" +
@@ -1105,16 +1332,16 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     #getImportPlugin(forClientJs)
     {
-        const builder   = this;
-        const cache     = this.#importLoadCache;
+        const self   = this;
+        const cache  = this.#importLoadCache;
         
         return {
             name: 'nakedjsx-import-plugin',
 
             async resolveId(id, importer, options)
             {
-                // if (options.isEntry)
-                //     return null;
+                if (options.isEntry)
+                    return null;
                 
                 if (id.startsWith('node:'))
                     return  {
@@ -1171,33 +1398,17 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 }
 
                 // overriden by config?
-                const resolveOverride = builder.#config.importResolveOverrides[id];
+                const resolveOverride = self.#config.importResolveOverrides[id];
                 if (resolveOverride)
                     return  {
                                 id: resolveOverride,
                                 external: false
                             };
 
-                // for (const [pkg, override] of Object.entries(builder.#config.importResolveOverrides))
-                // {
-                //     if (id === pkg)
-                //         return  {
-                //                     id: override,
-                //                     external: 'absolute'
-                //                 };
-                    
-                //     if (id.startsWith(pkg + '/'))
-                //         return  {
-                //                     id: id.replace(pkg, override),
-                //                     external: 'absolute'
-                //                 };
-                                
-                // }
-
                 // Asset imports
                 if (id.startsWith(':'))
                 {
-                    const asset = builder.#parseAssetImportId(id, importer);
+                    const asset = self.#parseAssetImportId(id, importer);
                     if (!asset)
                         return null;
 
@@ -1208,14 +1419,14 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 }
 
                 // Definitiions
-                if (builder.#definitions[id])
+                if (self.#definitions[id])
                     return  {
                                 id,
-                                meta: { definedAs: builder.#definitions[id] }
+                                meta: { definedAs: self.#definitions[id] }
                             };
 
                 // Check Javascript imports from aliased source paths
-                for (const [ alias, path ] of Object.entries(builder.#pathAliases))
+                for (const [ alias, path ] of Object.entries(self.#pathAliases))
                     if (id.startsWith(alias))
                         return  {
                                     id: id.replace(alias, path),
@@ -1244,7 +1455,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 // operating on standalone NakedJSX files (i.e. no package.json)
                 //
 
-                const nodeResolvedId = builder.#nodeResolve(id, importer);
+                const nodeResolvedId = self.#nodeResolve(id, importer);
                 if (nodeResolvedId)
                 {
                     let external = false;
@@ -1349,7 +1560,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     resolveLoadingPromise();
                 }
 
-                const result = await builder.#importAsset(meta.asset, resolve);
+                const result = await self.#importAsset(meta.asset, resolve);
 
                 //
                 // If the plugin didn't set the cache result explicitly (as an optimisation),
@@ -1366,7 +1577,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     #getTerserPlugin()
     {
-        const developmentMode = this.#developmentMode;
+        // basically no point, too hard to follow once Terser has done its thing, but if it's enabled ...
+        const sourceMap = this.#clientJsSourceMaps;
 
         return  {
                     name: 'terser',
@@ -1385,7 +1597,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                                         {
                                             toplevel: true,
                                         },
-                                    sourceMap:  developmentMode
+                                    sourceMap
                                 });
 
                         return  {
@@ -1405,25 +1617,23 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         // for page and client.
         //
 
-        const jsxImportPackage = forClientJs ? '@nakedjsx/core/client' : '@nakedjsx/core/page';
-
-        injections =
-            {
-                '__nakedjsx__createElement':  [jsxImportPackage, '__nakedjsx__createElement'],
-                '__nakedjsx__createFragment': [jsxImportPackage, '__nakedjsx__createFragment']
-            };
-
         const plugins =
             [
                 // Babel for JSX
-                mapCachePlugin(this.#getBabelInputPlugin(forClientJs), this.#babelInputCache),
+                this.#getBabelInputPlugin(forClientJs),
 
                 // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
-                this.#getImportPlugin(forClientJs),
-
-                // The babel JSX compiler will output calls to __nakedjsx_* functions
-                inject(injections),
+                this.#getImportPlugin(forClientJs)
             ];
+        
+        if (!forClientJs)
+            plugins.push(
+                inject(
+                    {
+                        '__nakedjsx__createElement':  ['@nakedjsx/core/page', '__nakedjsx__createElement'],
+                        '__nakedjsx__createFragment': ['@nakedjsx/core/page', '__nakedjsx__createFragment']
+                    })
+                );
         
         return plugins;
     }
@@ -1432,61 +1642,61 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
     {
         const plugins = [];
 
-        //
-        // If it appears that we are running under a debugger,
-        // add our debug workaround plugin that injects a small
-        // delay to the start of the page JS. This yucky hack
-        // allows early breakpoints in pages to work.
-        //
-        // I will be delighted when this can be replaced with
-        // something deterministic.
-        //
-        // https://github.com/microsoft/vscode-js-debug/issues/1510
-        //
-
-        if (!forClientJs && inspector.url())
-            plugins.push(
-                getBabelOutputPlugin(
-                    {
-                        sourceMaps: this.#developmentMode,
-                        plugins:
-                            [
-                                path.join(nakedJsxSourceDir, 'babel', 'plugin-debug-workaround.mjs')
-                            ],
-                    }));
-
         if (forClientJs)
         {
             //
             // Terser is used to compress the client JS.
-            // It pretty much kills step through debugging, so only enable it for production builds.
+            // It pretty much kills step through debugging,
+            // so only enable it when we're not in development
+            // mode and when there's no debugger attached.
             //
 
-            if (!this.#developmentMode)
-                plugins.push(mapCachePlugin(this.#getTerserPlugin(), this.#terserCache));
+            if (!this.#clientJsSourceMaps)
+                plugins.push(this.#getTerserPlugin());
+        }
+        else
+        {
+            const babelOutputPlugins = [];
+
+            //
+            // In template engine mode, we wrap everything (except imports) in
+            // an exported rendering function.
+            //
+
+            if (this.#templateEngineMode)
+                babelOutputPlugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-template-engine-renderer.mjs'));
+
+            //
+            // If it appears that we are running under a debugger,
+            // add our debug workaround plugin that injects a small
+            // delay to the start of the page JS. This yucky hack
+            // allows early breakpoints in pages to work.
+            //
+            // I will be delighted when this can be replaced with
+            // something deterministic.
+            //
+            // https://github.com/microsoft/vscode-js-debug/issues/1510
+            //
+
+            // **** THIS MUST REMAIN BE THE LAST BABEL OUTPUT PLUGIN SO THAT THE INJECTED DELAY CODE IS FIRST IN THE FILE ****
+            if (inspector.url())
+                babelOutputPlugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-debug-workaround.mjs'));
+
+            if (babelOutputPlugins)
+                plugins.push(
+                    getBabelOutputPlugin(
+                        {
+                            sourceMaps: this.#pageJsSourceMaps,
+                            plugins:    babelOutputPlugins
+                        }));
         }
         
         return plugins;
     }
 
-    /**
-     * Ignore changes to this file for the duration of the build.
-     */
-    #ignoreWatchFile(id)
-    {
-        this.#watchFilesIgnore.add(id);
-    }
-
     #addWatchFile(id, page)
     {
         if (!id) // simplify calling code
-            return;
-
-        //
-        // Should we ignore it?
-        //
-
-        if (this.#watchFilesIgnore.has(id))
             return;
         
         let file;
@@ -1531,7 +1741,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     #emitFile(page, filename, content)
     {
-        return fsp.writeFile(`${page.outputRoot}/${filename}`, content);
+        return fsp.writeFile(path.join(page.outputRoot, filename), content);
     }
 
     async #mkTempDir()
@@ -1544,15 +1754,21 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     async #rmTempDir()
     {
-        const builder = this;
+        const self = this;
 
         async function deleteAll(dir)
         {
             for (const entry of await fsp.readdir(dir, { withFileTypes: true }))
             {
                 const fullPath = fs.realpathSync(path.join(dir, entry.name));
-                if (!fullPath.startsWith(builder.#dstDir + path.sep))
-                    throw Error(`path to delete (${fullPath}) not under dst dir (${builder.#dstDir})`);
+
+                // Defensively only delete things that exist somewhere under tmpRoot
+                if (!fullPath.startsWith(self.#tmpRoot + path.sep))
+                    throw Error(`path to delete (${fullPath}) not under tmp dir (${self.#tmpRoot})`);
+
+                // Also defensively only delete things that under a dir called <nakedJsxTmpDirName>
+                if (!fullPath.split(path.sep).includes(nakedJsxTmpDirName))
+                    throw Error(`path to delete (${fullPath}) not under a dir called ${nakedJsxTmpDirName}`);
 
                 if (entry.isFile())
                     await fsp.unlink(fullPath);
@@ -1580,6 +1796,65 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
         if (!page.clientJsFileIn && !thisBuild.inlineJs.length)
             return;
+        
+        // Ensure each inline js ends with ';' before joining
+        const inlineJs =
+            thisBuild.inlineJs
+                .map(js => semicolonify(js))
+                .join('\n\n');
+
+        const importInjection = `import { __nakedjsx__createElement, __nakedjsx__createFragment } from '@nakedjsx/core/client';\n`;
+        
+        let combinedJs;
+        if (page.clientJsFileIn)
+        {
+            const clientJs = (await fsp.readFile(page.clientJsFileIn)).toString();
+            combinedJs = importInjection + semicolonify(clientJs) + '\n' + inlineJs;
+        }
+        else
+            combinedJs = importInjection + inlineJs;
+
+        //
+        // combinedJs now contains the full client JS.
+        //
+
+        try
+        {
+            const result = await this.#rollupClientJs(page, combinedJs);
+
+            //
+            // Remember which files, if changed, should trigger a rebuild of this page.
+            // We'll add to this list after compiling the html JS.
+            //
+
+            for (const watchFile of result.watchFiles)
+                this.#addWatchFile(watchFile, page);
+
+            if (result.inlineJs)
+                thisBuild.output.inlineJs.push(result.inlineJs);
+        }
+        catch (error)
+        {
+            err(`Page client JavaScript compilation error in page ${page.uriPath}`);
+            err(error.stack);
+
+            // Watch related files for fixes
+            if (error.watchFiles)
+                for (let watchFile of error.watchFiles)
+                    this.#addWatchFile(watchFile, page);
+
+            return this.#onPageBuildFailure(page);
+        }
+    }
+
+    async #rollupClientJs(page, combinedJs)
+    {
+        // Check the cache first. Helps a LOT in template engine mode
+        const cachedResult = this.#clientJsRollupCache.get(combinedJs);
+        if (cachedResult)
+            return cachedResult;
+        
+        const { thisBuild } = page;
 
         //
         // Although we have a unique folder name, it seems we also need a unique
@@ -1587,37 +1862,32 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         // dynamically import()ing.
         //
 
-        const inlineJsFilename      = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
-        const tmpSrcFile            = this.#versionedTmpFilePath(inlineJsFilename);
-        const inputSourcemapRemap   = {};
-
-        // Ensure each inline js ends with ';' before joining
-        const inlineJs =
-            thisBuild.inlineJs
-                .map(js => semicolonify(js))
-                .join('\n\n');
-
-        //
-        // Make inline source look like it came from src/<page>-page-client.mjs'
-        // Ideally it would show up as a seperate file from the real client JS,
-        // which will require manipulating the sourcemap after the build.
-        //
-
-        inputSourcemapRemap[tmpSrcFile] = path.join(this.#srcDir, inlineJsFilename);
-
-        this.#ignoreWatchFile(tmpSrcFile);
-        if (page.clientJsFileIn)
-        {
-            const clientJs = (await fsp.readFile(page.clientJsFileIn)).toString();
-            await fsp.writeFile(tmpSrcFile, semicolonify(clientJs) + '\n' + inlineJs);
-        }
-        else
-            await fsp.writeFile(tmpSrcFile, inlineJs);
-
+        const inlineJsFilename = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
+        
         const inputOptions =
             {
-                input:      tmpSrcFile,
-                plugins:    this.#rollupPlugins.input.client
+                input:   inlineJsFilename,
+                plugins:
+                    [
+                        // spyPlugin('spy-0'),
+                        {
+                            name: 'nakedjsx-client-source',
+
+                            resolveId(id)
+                            {
+                                if (id === inlineJsFilename)
+                                    return inlineJsFilename;
+                            },
+
+                            load(id)
+                            {
+                                if (id === inlineJsFilename)
+                                    return combinedJs;
+                            }
+                        },
+                        // spyPlugin('spy-1'),
+                        ...this.#rollupPlugins.input.client
+                    ]
             };
 
         //
@@ -1631,7 +1901,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         const babelOutputPlugin =
             getBabelOutputPlugin(
                 {
-                    sourceMaps: this.#developmentMode,
+                    sourceMaps: this.#clientJsSourceMaps,
                     plugins:
                         [
                             // Our Scoped CSS extraction runs over the final tree shaken output
@@ -1640,10 +1910,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                                 {
                                     scopedCssSet: thisBuild.scopedCssSet
                                 }
-                            ],
-
-                            // // Our babel plugin that wraps the output in a self calling function, preventing creation of globals.
-                            // path.join(nakedJsxSourceDir, 'babel', 'plugin-iife.mjs')
+                            ]
                         ],
                     targets:    this.#config.browserslistTargetQuery,
                     presets:
@@ -1668,64 +1935,34 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             {
                 entryFileNames: `${page.htmlFile}.[hash:64].js`,
                 format: 'cjs',
-                sourcemap: this.#developmentMode ? 'inline' : false,
-                sourcemapPathTransform:
-                    (relativeSourcePath, sourcemapPath) =>
-                    {
-                        const fullPath = path.resolve(path.dirname(sourcemapPath), relativeSourcePath);
+                sourcemap: this.#clientJsSourceMaps ? 'inline' : false,
+                plugins:
+                    [
+                        babelOutputPlugin,
+                        ...this.#rollupPlugins.output.client
+                    ]
+            };
 
-                        
-                        if (inputSourcemapRemap[fullPath])
-                        {
-                            // We remapped this path, convert to be relative to the sourcemap path dirname
-                            return path.relative(path.dirname(sourcemapPath), inputSourcemapRemap[fullPath]);
-                        }
-                        else
-                            return relativeSourcePath;
-                    },
-                plugins: [ babelOutputPlugin, ...this.#rollupPlugins.output.client ]
-            };    
-        
-        let bundle;
-
-        try
-        {
-            bundle = await rollup(inputOptions);
-        }
-        catch(error)
-        {
-            err(`Page client JavaScript compilation error in page ${page.uriPath}`);
-            err(error.stack);
-
-            // Watch related files for changes
-            for (let watchFile of error.watchFiles)
-                this.#addWatchFile(watchFile, page);
-
-            await this.#onPageBuildComplete(page, true);
-            return;
-        };
-        
         //
-        // Remember which files, if changed, should trigger a rebuild of this page.
-        // We'll add to this list after compiling the html JS.
+        // All set; rollup
         //
-
-        for (let watchFile of bundle.watchFiles)
-            this.#addWatchFile(watchFile, page);
-
-        const bundlerOutput = await bundle.generate(outputOptions);
-
+        
+        const bundle = await rollup(inputOptions);
+        const output = (await bundle.generate(outputOptions)).output;
+        const result =
+            {
+                watchFiles: [...bundle.watchFiles]
+            };
         bundle.close();
 
+        const chunks = output.filter(output => output.type === 'chunk' && output.imports.length == 0);
+        const assets = output.filter(output => output.type === 'asset');
+
+        //
+        // Always output assets (which will be sourcemaps)
+        //
+
         const promises = [];
-
-        const chunks = bundlerOutput.output.filter(output => output.type === 'chunk' && output.imports.length == 0);
-        const assets = bundlerOutput.output.filter(output => output.type === 'asset');
-
-        //
-        // Always output assets (sourcemaps)
-        //
-
         for (let output of assets)
             promises.push(this.#emitFile(page, output.fileName, output.source));
 
@@ -1739,10 +1976,12 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         if (chunks.length)
         {
             const chunk = chunks[0];
-            chunk.code = chunk.code.trim();
+            chunk.code  = chunk.code.trim();
 
             if (thisBuild.config.client.js.inline)
-                thisBuild.output.inlineJs.push(chunk.code);
+            {
+                result.inlineJs = chunk.code;
+            }
             else
             {
                 promises.push(this.#emitFile(page, chunk.fileName, chunk.code));
@@ -1750,7 +1989,12 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             }
         }
 
-        return Promise.all(promises);
+        // Wait for emitted files to be written
+        await Promise.all(promises);
+
+        // Cache and return
+        this.#clientJsRollupCache.set(combinedJs, result);
+        return result;
     }
 
     async #buildHtmlJs(page)
@@ -1765,8 +2009,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
         log(`Building ${page.uriPath}`);
 
-        const builder = this;
-
         //
         // Our HTML pages are generated by executing the htmlJsFileIn.
         // But first we have to handle our custom asset imports and
@@ -1779,12 +2021,14 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 plugins: this.#rollupPlugins.input.server
             };
 
-        thisBuild.htmlJsFileOut = this.#versionedTmpFilePath(page.htmlFile.replace(/.html$/, '-page.mjs'));
-    
+        const pageMjsFilename = page.htmlFile.replace(/\.html$/, '-page.mjs');
+        
+        thisBuild.htmlJsFileOut = this.#versionedTmpFilePath(pageMjsFilename);
+
         const outputOptions =
             {
                 file:                       thisBuild.htmlJsFileOut,
-                sourcemap:                  this.#developmentMode ? 'inline' : false,
+                sourcemap:                  this.#pageJsSourceMaps ? 'inline' : false,
                 sourcemapExcludeSources:    true,
                 format:                     'es',
                 plugins:                    this.#rollupPlugins.output.server
@@ -1804,7 +2048,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             for (let watchFile of error.watchFiles)
                 this.#addWatchFile(watchFile, page);
 
-            await builder.#onPageBuildComplete(page, true);
+            await this.#onPageBuildFailure(page);
             return;
         }
 
@@ -1820,23 +2064,77 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         const output = await bundle.write(outputOptions);
 
         bundle.close();
-        
+
+        if (this.#templateEngineMode)
+            await this.#addTemplateEnginePath(page)
+        else
+            await this.#generatePageHtml(page)
+    }
+
+    async #addTemplateEnginePath(page)
+    {
+        const { thisBuild } = page;
+
+        //
+        // Page JS is built, make it available for template engine rendering
+        //
+
+        try
+        {
+            const module = await import(pathToFileURL(thisBuild.htmlJsFileOut).href)
+
+            if (!module.render)
+                throw new Error(`Imported page JS ${thisBuild.htmlJsFileOut} does not export render()`);
+
+            const existingHandler = this.#templateEnginePathHandlers.get(page.uriPath);
+            this.#templateEnginePathHandlers.set(
+                page.uriPath,
+                {
+                    page:   page,
+                    render: module.render
+                });
+
+            //
+            // There may be parked requests in the previous handler
+            //
+
+            if (existingHandler.parkedRenders?.length)
+                for (const parkedRender of existingHandler.parkedRenders)
+                    parkedRender.renderNow(module.render);
+        }
+        catch(error)
+        {
+            err(`error during import of ${thisBuild.htmlJsFileOut}`);
+            err(error.stack);
+
+            return this.#onPageBuildFailure(page);
+        }
+
+        return this.#onPageBuildSuccess(page);
+    }
+
+    async #generatePageHtml(page)
+    {
+        const { thisBuild } = page;
+
         //
         // Page JS is built, import it to execute
         //
 
-        const writePromises = []; // populated by onRendered()
-        let failed = false;
+        const self          = this;
+        const writePromises = [];
+        let   failed        = false;
 
         try
         {
             await currentJob
                 .run(
                     {
-                        developmentMode:        this.#developmentMode,
-                        commonCss:              this.#commonCss,
+                        developmentMode:    this.#developmentMode,
+                        templateEngineMode: this.#templateEngineMode,
+                        commonCss:          this.#commonCss,
                         page,
-                        onRenderStart,
+                        onRenderStart:      this.#onRenderStart.bind(this),
                         onRendered
                     },
                     async () =>
@@ -1854,55 +2152,35 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             failed = true;
         };
 
+        // onRendered() may have produced a bunch of HTML file write promises
         await Promise.all(writePromises);
                         
         if (failed)
         {
             err(`Server js execution error in page ${page.uriPath}`);
-            await builder.#onPageBuildComplete(page, true);
+            await this.#onPageBuildFailure(page);
             return;
         }
 
-        // Leave the generation JS file in dev mode
-        if (!builder.#developmentMode)
+        // Delete the generation JS file if not in dev mode
+        if (!this.#developmentMode)
             await fsp.unlink(thisBuild.htmlJsFileOut);
             
-        await builder.#onPageBuildComplete(page);
-
-        async function onRenderStart(outputFilename)
-        {
-            log(`Page ${page.uriPath} rendering: ${outputFilename}`);
-
-            thisBuild.nextOutputFilename = outputFilename;
-
-            //
-            // Now that Page.Render() has been called, we can finalise our common CSS
-            // and reserve all known classes so that generated classes do not clash.
-            //
-            
-            thisBuild.scopedCssSet.reserveCommonCssClasses(getCurrentJob().commonCss);
-
-            //
-            // Now that common CSS class names have been reserved, we can process
-            // any client JS and extract / generate scoped CSS classes.
-            //
-
-            await builder.#buildClientJs(page);
-        }
+        await this.#onPageBuildSuccess(page);
 
         function onRendered(htmlContent)
         {
             const outputFilename    = page.thisBuild.nextOutputFilename;
             const fullPath          = path.normalize(path.join(page.outputRoot, outputFilename));
 
-            if (!fullPath.startsWith(builder.#dstDir ))
+            if (!fullPath.startsWith(self.#dstDir ))
             {
-                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${builder.#dstDir}`);
+                err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${self.#dstDir}`);
                 failed = true;
                 return;
             }
 
-            if (builder.#config.pretty)
+            if (self.#config.pretty)
                 htmlContent =
                     jsBeautifier.html_beautify(
                         htmlContent,
@@ -1930,11 +2208,43 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         }
     }
 
-    async #onPageBuildComplete(page, hasError)
+    async #onRenderStart(outputFilename)
     {
-        if (hasError)
-            this.#pagesWithErrors.add(page);
+        const { page } = getCurrentJob();
 
+        log(`Page ${page.uriPath} rendering: ${outputFilename}`);
+
+        page.thisBuild.nextOutputFilename = outputFilename;
+
+        //
+        // Now that Page.Render() has been called, we can finalise our common CSS
+        // and reserve all known classes so that generated classes do not clash.
+        //
+        
+        page.thisBuild.scopedCssSet.reserveCommonCssClasses(getCurrentJob().commonCss);
+
+        //
+        // Now that common CSS class names have been reserved, we can process
+        // any client JS and extract / generate scoped CSS classes.
+        //
+
+        await this.#buildClientJs(page);
+    }
+
+    async #onPageBuildFailure(page)
+    {
+        this.#pagesWithErrors.add(page);
+
+        await this.#onBuildComplete(page);
+    }
+
+    async #onPageBuildSuccess(page)
+    {
+        await this.#onPageBuildComplete(page);
+    }
+
+    async #onPageBuildComplete(page)
+    {
         if (!this.#pagesInProgress.has(page))
         {
             // If one or more parallel build tasks failed we can end up here
@@ -1973,15 +2283,18 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         }
 
         //
-        // If nothing was placed in the destination asset dir, remove it
+        // If the asset dir is under dstDir, and if nothing
+        // was placed in it, remove it.
         //
 
-        if (fs.existsSync(this.#dstAssetDir) && fs.readdirSync(this.#dstAssetDir).length == 0)
-            fs.rmdirSync(this.#dstAssetDir);
+        if (fs.existsSync(this.#dstAssetDir))
+            if (this.#dstAssetDir.startsWith(this.#dstDir + path.sep))
+                if (fs.readdirSync(this.#dstAssetDir).length == 0)
+                    fs.rmdirSync(this.#dstAssetDir);
         
         const hasErrors = !!this.#pagesWithErrors.size;
 
-        if (!this.#developmentMode)
+        if (!this.#developmentMode && !this.#templateEngineMode)
         {
             if (hasErrors)
                 fatal(`Finished build (with errors).\nNOTE: Some async tasks may yet complete and produce log output.`);
@@ -1999,7 +2312,34 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         
         enableBenchmark(false);
 
-        const prefix = hasErrors ? '(Build errors) ' : '';
-        log.setPrompt(`${prefix}Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
+        if (this.#developmentMode)
+        {
+            const prefix = hasErrors ? '(Build errors) ' : '';
+            log.setPrompt(`${prefix}Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
+        }
     }
 }
+
+class ParkedRender extends AsyncResource
+{
+    constructor(renderContext)
+    {
+        super('ParkedRender');
+        this.renderContext = renderContext;
+    }
+
+    renderNow(renderFunction)
+    {
+        // Restore the original request async context and call the render function
+        this.runInAsyncScope(renderFunction, null, this.renderContext);
+    }
+}
+
+NakedJSX.Events =
+    {
+        /** A page has been discovered */
+        page_new:       'page_new',
+
+        /** A page is no longer available */
+        page_delete:    'page_new',
+    };

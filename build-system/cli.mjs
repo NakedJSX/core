@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { packageInfo, configFilename, emptyConfig, NakedJSX } from './nakedjsx.mjs';
-import { log, warn, fatal, jsonClone, camelToKebabCase, absolutePath } from './util.mjs';
+import { log, warn, fatal, jsonClone, camelToKebabCase, absolutePath, merge } from './util.mjs';
 
 let developmentMode = false;    // --dev
 let configSave      = false;    // --config-save
@@ -98,7 +98,13 @@ const options =
                 deprecatedAlias: ['--output-dir'],
                 impl(config, { path })
                 {
-                    config.outputDir = configPath(path)
+                    if (config.output)
+                        config.output.dir = configPath(path);
+                    else
+                        config.output = { dir: configPath(path) };
+
+                    if (config.outputDir)
+                        delete config.outputDir;
                 }
             },
 
@@ -150,6 +156,26 @@ const options =
                 impl(config, { key, value })
                 {                    
                     config.definitions[key] = value;
+                }
+            },
+
+        '--sourcemaps-disable':
+            {
+                desc: 'Don\'t create sourcemaps (which are normally enabled in dev mode and when debugger attached)',
+                impl(config)
+                {                    
+                    config.output.pageJs.sourcemaps     = 'disable';
+                    config.output.clientJs.sourcemaps   = 'disable';
+                }
+            },
+
+        '--sourcemaps-enable':
+            {
+                desc: 'Create sourcemaps (which are normally disabled untless dev mode or when debugger attached)',
+                impl(config)
+                {                    
+                    config.output.pageJs.sourcemaps     = 'enable';
+                    config.output.clientJs.sourcemaps   = 'enable';
                 }
             },
 
@@ -262,7 +288,7 @@ function loadBaseConfig()
 
     try
     {
-        Object.assign(config, JSON.parse(fs.readFileSync(configFile)));
+        merge(config, JSON.parse(fs.readFileSync(configFile)));
     }
     catch(error)
     {

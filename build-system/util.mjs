@@ -20,12 +20,12 @@ function setPrompt(newPrompt)
         promptText = `\n${boldOn}${newPrompt}${boldOff}`;
 
         if (firstPrompt)
-            console.log(`${promptText}`);
+            log.quiet || console.log(`${promptText}`);
         else
-            console.log(`${promptClear}${promptText}`)
+            log.quiet || console.log(`${promptClear}${promptText}`)
     }
     else
-        console.log(`\n${newPrompt}`);
+        log.quiet || console.log(`\n${newPrompt}`);
 }
 
 export function enableBenchmark(enable)
@@ -53,7 +53,7 @@ function formatLogMessaage(message, prefix = '')
     if (benchmarkEnable)
     {
         const thisTime              = new Date().getTime();
-        const timeSinceStart        = thisTime - benchmarkStart;
+        const timeSinceStart        = ((thisTime - benchmarkStart) / 1000).toFixed(3);
         const [, leadingNewlines]   = message.match(/^(\n*)/);
         const followingMessage      = message.substring(leadingNewlines.length);
 
@@ -70,21 +70,29 @@ function formatLogMessaage(message, prefix = '')
 
 export function log(message)
 {
-    console.log(formatLogMessaage(message));
+    log.quiet || console.log(formatLogMessaage(message));
 }
+
+log.important =
+    function(message)
+    {
+        // ignore the quiet setting
+        console.log(formatLogMessaage(message))
+    };
 
 log.boldOn      = boldOn;
 log.boldOff     = boldOff;
 log.setPrompt   = setPrompt;
+log.quiet       = false;
 
 export function warn(message)
 {
-    console.warn(`\x1b[1m${formatLogMessaage(message, 'WARNING: ')}\x1b[22m`);
+    console.warn(`${boldOn}${formatLogMessaage(message, 'WARNING: ')}${boldOff}`);
 }
 
 export function err(message)
 {
-    console.error(`\x1b[1m${formatLogMessaage(message, 'ERROR: ')}\x1b[22m`);
+    console.error(`${boldOn}${formatLogMessaage(message, 'ERROR: ')}${boldOff}`);
 }
 
 export function fatal(message, lastHurrahCallback)
@@ -165,4 +173,22 @@ export function semicolonify(js)
         return js;
     else
         return `${js};`;
+}
+
+export function merge(target, source, loopPreventor = new Set())
+{
+    loopPreventor.add(source);
+
+    for (const [key, value] of Object.entries(source))
+    {
+        if (typeof target[key] === 'object' && typeof value === 'object')
+        {
+            if (loopPreventor.has(value))
+                throw new Error(`Refusing to merge self-referencing object`);
+
+            merge(target[key], value, loopPreventor);
+        }
+        else
+            target[key] = value;
+    }
 }
