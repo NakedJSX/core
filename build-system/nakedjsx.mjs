@@ -196,14 +196,6 @@ export class NakedJSX extends EventEmitter
         // Potentially update the log quiet setting.
         // TODO: avoid general double processing of the config when used via CLI
         log.quiet = !!this.#config.quiet;
-
-        // Definitions might be sensitive, so mask them when dumping the effective config
-        const redactedConfig = jsonClone(JSON.parse(JSON.stringify(this.#config)));
-
-        for (const key in redactedConfig.definitions)
-            redactedConfig.definitions[key] = '****';
-
-        log(`Effective config:\n${JSON.stringify(redactedConfig, null, 4)}`);
     }
 
     absolutePathFromConfig(relativeOrAbsolute)
@@ -380,6 +372,14 @@ export class NakedJSX extends EventEmitter
                     register: this.#registerPlugin.bind(this, alias)
                 });
         }
+
+        // Definitions might be sensitive, so mask them when dumping the effective config
+        const redactedConfig = jsonClone(JSON.parse(JSON.stringify(this.#config)));
+
+        for (const key in redactedConfig.definitions)
+            redactedConfig.definitions[key] = '****';
+
+        log(`Effective config (paths are relative to ${this.#srcDir}):\n${JSON.stringify(redactedConfig, null, 4)}`);
     }
 
     #registerPlugin(alias, plugin)
