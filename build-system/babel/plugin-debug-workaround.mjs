@@ -28,10 +28,10 @@ export default function(babel)
                 Program(nodePath)
                 {
                     //
-                    // Place the following code at the start of the program:
+                    // Place a delay at the start of the program (should only be used if debugger attached).
+                    // This is to work around issues with breakpoints in dynamically import()ed files.
                     //
-                    //     // Hack: give vscode time to connect breakpoints for dynamic import ...
-                    //     await new Promise(resolve => setTimeout(resolve, 25));
+                    // See: https://github.com/microsoft/vscode-js-debug/issues/1510#issuecomment-1560510140
                     //
 
                     const delayCode =
