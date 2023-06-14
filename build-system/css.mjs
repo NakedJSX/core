@@ -135,6 +135,9 @@ export class ScopedCssSet
 
     reserveCommonCssClasses(commonCss)
     {
+        if (!commonCss)
+            return;
+        
         const reserved = this.reserved;
 
         //
@@ -168,37 +171,15 @@ export class ScopedCssSet
     }
 }
 
-export function finaliseCssClasses(document, commonCss, scopedCssSet)
+export function finaliseCssClasses(commonCss, elementsWithCss, scopedCssSet)
 {
     //
-    // Now that the document is complete, find all elements that have a CSS attribute.
-    // Then output a bunch of CSS classes, deduplicating as appropriate.
+    // Now that the document is complete, process all elements that have a CSS attribute.
+    // and output a bunch of CSS classes, deduplicating as appropriate.
     //
 
-    findElements(document.body);
-
-    return loadCss(
-        commonCss + scopedCssSet.collateAll(),
-        {
-            renameVariables: true
-        });
-
-    function findElements(element)
+    for (const element of elementsWithCss)
     {
-        processElement(element);
-
-        if (!element?.children)
-            return;
-
-        for (const child of element.children)
-            findElements(child);
-    }
-
-    function processElement(element)
-    {
-        if (!element?.attributes?.css)
-            return;
-        
         let className = scopedCssSet.getClassName(element.attributes.css)
         delete element.attributes.css;
         
@@ -210,6 +191,12 @@ export function finaliseCssClasses(document, commonCss, scopedCssSet)
         else
             element.attributes.class = className;
     }
+
+    return loadCss(
+        commonCss + scopedCssSet.collateAll(),
+        {
+            renameVariables: true
+        });
 }
 
 export function loadCss(input, options)

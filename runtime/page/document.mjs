@@ -214,6 +214,8 @@ export class ServerDocument
 {
     constructor(lang)
     {
+        this.elementsWithCss = [];
+
         this.documentElement = new Element("html");
         this.documentElement.setAttribute("lang", lang);
 

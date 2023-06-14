@@ -530,7 +530,7 @@ ${feebackChannels}
     {
         const handler = this.#templateEnginePathHandlers.get(uriPath);
         if (!handler)
-            throw (`@nakedjsx/express-jsx does not have a handler for uriPath: ${uriPath}`);
+            throw (`NakedJSX does not have a handler for uriPath: ${uriPath}`);
 
         const htmlResult =
             await new Promise(
@@ -2208,10 +2208,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         }
     }
 
-    async #onRenderStart(outputFilename)
+    async #onRenderStart(page, outputFilename)
     {
-        const { page } = getCurrentJob();
-
         log(`Page ${page.uriPath} rendering: ${outputFilename}`);
 
         page.thisBuild.nextOutputFilename = outputFilename;
@@ -2315,7 +2313,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         if (this.#developmentMode)
         {
             const prefix = hasErrors ? '(Build errors) ' : '';
-            log.setPrompt(`${prefix}Development server: ${this.#developmentServer.serverUrl}, Press (x) to exit`);
+            const suffix = inspector.url() ? '' : ', Press (x) to exit';
+            log.setPrompt(`${prefix}Development server: ${this.#developmentServer.serverUrl}${suffix}`);
         }
     }
 }

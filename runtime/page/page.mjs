@@ -100,7 +100,7 @@ export function __nakedjsx__createFragment(props)
 /** Injected by the JSX compiler as needed */
 export function __nakedjsx__createElement(tag, props, ...children)
 {
-    if (children)
+    if (children.length)
         children =
             children
                 //
@@ -129,7 +129,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
     props = props ?? {};
     props.context = makeContext();
 
-    if (children)
+    if (children.length)
         for (const child of children)
             if (child instanceof DeferredElement)
                 child.context._setParent(props.context);
@@ -157,16 +157,23 @@ function createElement(tag, props, children)
     const element       = document.createElement(tag, props.context);
     const eventHandlers = [];
 
-    Object.entries(props).forEach(
-        ([name, value]) =>
+    for (const [name, value] of Object.entries(props))
+    {
+        if (!value)
+            continue;
+        
+        if (name.startsWith('on'))
+            eventHandlers.push({ name, value});
+        else if (name === 'className')
+            element.setAttribute('class', value);
+        else
         {
-            if (name.startsWith('on'))
-                eventHandlers.push({ name, value});
-            else if (name === 'className')
-                element.setAttribute('class', value);
-            else
-                element.setAttribute(name, value);
-        });
+            if (name === 'css')
+                document.elementsWithCss.push(element);
+
+            element.setAttribute(name, value);
+        }
+    }
     
     //
     // Generate event handling JS
@@ -428,6 +435,7 @@ export const Page =
         async Render(outputFilename)
         {
             const { page, commonCss, onRenderStart, onRendered, developmentMode, templateEngineMode } = getCurrentJob();
+            const document = getDocument();
 
             if (outputFilename)
             {
@@ -446,14 +454,14 @@ export const Page =
             // NOTHING ASYNC CAN BE SAFELY INVOKED BEFORE onRenderStart()
             //
 
-            await onRenderStart(outputFilename);
+            await onRenderStart(page, outputFilename);
 
             //
             // We have our page structure, it's now time to process CSS attributes
             //
 
             // Equivalent to this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
-            const finalCss = finaliseCssClasses(getDocument(), commonCss, page.thisBuild.scopedCssSet);
+            const finalCss = finaliseCssClasses(commonCss, document.elementsWithCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
                     __nakedjsx__createElement(
@@ -541,7 +549,8 @@ export const Page =
             // Render the document to HTML and pass result back
             //
 
-            onRendered(getDocument().toHtml({ relativeAssetRoot }));
+            onRendered(document.toHtml({ relativeAssetRoot }));
+            // onRendered('<html></html>');
 
             setDocument(null);
         },
