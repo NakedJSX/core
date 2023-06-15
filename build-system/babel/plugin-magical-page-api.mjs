@@ -21,76 +21,97 @@ export default function(babel)
 {
     const t = babel.types;
 
-    let importedPageIdentifier;
-
     return {
         visitor:
             {
-                Program(nodePath, pluginPass)
+                Program(nodePath)
                 {
-                    importedPageIdentifier = undefined;
-                },
-
-                ImportDeclaration(nodePath, pluginPass)
-                {
-                    for (const specifer of nodePath.node.specifiers)
-                    {
-                        if (specifer.type !== 'ImportSpecifier')
-                            continue;
-                        
-                        if (nodePath.node.source.value !== '@nakedjsx/core/page')
-                            continue;
-
-                        if (specifer.imported.name !== 'Page')
-                            continue;
-
-                        //
-                        // This program has imported { Page }, or maybe { Page as Something }, from '@nakedjsx/core/page'
-                        //
-                        // We are making the assumption that Render() will be called directy on this object,
-                        // but people doing fancy things can call await themselves.
-                        //
-
-                        importedPageIdentifier = specifer.local.name;
-                        break;
-                    }
-                },
-
-                CallExpression(nodePath, pluginPass)
-                {
-                    if (!importedPageIdentifier)
-                        return;
-                    
-                    const callee = nodePath.node.callee;
-                    if (callee.type !== 'MemberExpression')
-                        return;
-
-                    if (callee.object.name !== importedPageIdentifier)
-                        return;
-                    
                     //
-                    // It's Page.<something>()
+                    // We wamt to make sure that any JSX code passed to
+                    // client JS is not first compliled for page JS.
+                    //
+                    // Since babel plugin order is complex,
+                    // and we want to guarantee that this plugin
+                    // has completed before the page JS JSX transform,
+                    // we immediately traverse the enture program.
                     //
 
-                    if (callee.property.name === 'Render')
-                    {
-                        if (nodePath.parentPath.type !== 'AwaitExpression')
+                    let importedPageIdentifier = undefined;
+
+                    nodePath.traverse(
                         {
-                            //
-                            // Wrap the non-awaited Page.Render(...) with an AwaitExpression
-                            //
+                            JSXAttribute(nodePath)
+                            {
+                                // Catch attempts to set magic props
+                                if (nodePath.node.name.name === 'context')
+                                    throw nodePath.buildCodeFrameError(`Manually setting reserved 'context' prop is not allowed`);
+                                
+                                if (nodePath.node.name.name === 'children')
+                                    throw nodePath.buildCodeFrameError(`Manually setting reserved 'children' prop is not allowed`);
+                            },
 
-                            nodePath.replaceWith(t.awaitExpression(nodePath.node));
-                        }
+                            ImportDeclaration(nodePath)
+                            {
+                                for (const specifer of nodePath.node.specifiers)
+                                {
+                                    if (specifer.type !== 'ImportSpecifier')
+                                        continue;
+                                    
+                                    if (nodePath.node.source.value !== '@nakedjsx/core/page')
+                                        continue;
 
-                        return;
-                    }
+                                    if (specifer.imported.name !== 'Page')
+                                        continue;
 
-                    if (callee.property.name === 'AppendJs' || callee.property.name === 'AppendJsIfNew')
-                    {
-                        handleAppendJs(nodePath);
-                        return;
-                    }
+                                    //
+                                    // This program has imported { Page }, or maybe { Page as Something }, from '@nakedjsx/core/page'
+                                    //
+                                    // We are making the assumption that Render() will be called directy on this object,
+                                    // but people doing fancy things can call await themselves.
+                                    //
+
+                                    importedPageIdentifier = specifer.local.name;
+                                    break;
+                                }
+                            },
+
+                            CallExpression(nodePath, pluginPass)
+                            {
+                                if (!importedPageIdentifier)
+                                    return;
+                                
+                                const callee = nodePath.node.callee;
+                                if (callee.type !== 'MemberExpression')
+                                    return;
+
+                                if (callee.object.name !== importedPageIdentifier)
+                                    return;
+                                
+                                //
+                                // It's Page.<something>()
+                                //
+
+                                if (callee.property.name === 'Render')
+                                {
+                                    if (nodePath.parentPath.type !== 'AwaitExpression')
+                                    {
+                                        //
+                                        // Wrap the non-awaited Page.Render(...) with an AwaitExpression
+                                        //
+
+                                        nodePath.replaceWith(t.awaitExpression(nodePath.node));
+                                    }
+
+                                    return;
+                                }
+
+                                if (callee.property.name === 'AppendJs' || callee.property.name === 'AppendJsIfNew')
+                                {
+                                    handleAppendJs(nodePath);
+                                    return;
+                                }
+                            }
+                        })
                 }
             }
         };

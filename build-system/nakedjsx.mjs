@@ -980,34 +980,51 @@ ${feebackChannels}
 
     #getBabelInputPlugin(forClientJs)
     {
+        const plugins = [];
+
+        if (forClientJs)
+        {
+            plugins.push(
+                [
+                    //
+                    // Our implementation of the automatic runtime results in larger client JS
+                    // so we keep using the classic implemenation.
+                    //
+
+                    resolveModule("@babel/plugin-transform-react-jsx"),
+                    {
+                        runtime:    'classic',
+                        pragma:     '__nakedjsx__createElement',
+                        pragmaFrag: '__nakedjsx__createFragment'
+                    }
+                ]);
+        }
+        else
+        {
+            // JSX syntax (untransformed) needed by plugin-magical-page-api.mjs
+            plugins.push(resolveModule('@babel/plugin-syntax-jsx'));
+            plugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'));
+            plugins.push(
+                [
+                    resolveModule("@babel/plugin-transform-react-jsx"),
+                    {
+                        runtime:        'automatic',
+                        importSource:   '@nakedjsx/core/page'
+                    }
+                ]);
+        }
+
         const config =
             {
                 sourceMaps: forClientJs ? this.#clientJsSourceMaps : this.#pageJsSourceMaps,
                 babelHelpers: 'inline',
-                plugins:
-                    [
-                        [
-                            //
-                            // Allow babel to transpile JSX syntax to our injected functions.
-                            //
-                            
-                            resolveModule("@babel/plugin-transform-react-jsx"),
-                            {
-                                pragma:       '__nakedjsx__createElement',
-                                pragmaFrag:   '__nakedjsx__createFragment'
-                            }
-                        ]
-                    ]
+                plugins
             };
         
         if (process.env.NODE_ENV === 'production')
             config.skipPreflightCheck = true;
         else
             config.skipPreflightCheck = !(this.#developmentMode || inspector.url());
-        
-        // Magical source code transformations for the Page.* API.
-        if (!forClientJs)
-            config.plugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'));
 
         return babel(config);
     }
@@ -1358,7 +1375,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 // that live outside of a node project that directly imports @nakedjsx.
                 //
 
-                if (id === '@nakedjsx/core/page')
+                if (id.startsWith('@nakedjsx/core/page'))
                 {
                     //
                     // Only ever used to generate html - not used by client JS.
@@ -1625,15 +1642,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
                 this.#getImportPlugin(forClientJs)
             ];
-        
-        if (!forClientJs)
-            plugins.push(
-                inject(
-                    {
-                        '__nakedjsx__createElement':  ['@nakedjsx/core/page', '__nakedjsx__createElement'],
-                        '__nakedjsx__createFragment': ['@nakedjsx/core/page', '__nakedjsx__createFragment']
-                    })
-                );
         
         return plugins;
     }

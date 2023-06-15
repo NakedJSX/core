@@ -110,7 +110,7 @@ class Element
 
         if (Array.isArray(child))
         {
-            for (const nestedChild of child.flat())
+            for (const nestedChild of child)
                 this.appendChild(nestedChild);
             
             return child;

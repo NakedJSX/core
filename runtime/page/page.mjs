@@ -38,205 +38,6 @@ function getDocument(document)
     return asyncLocalStorage.getStore().document;
 }
 
-function makeContext()
-{
-    let parent;
-
-    function _setParent(newParent)
-    {
-        parent = newParent;
-    }
-    
-    const context =
-        new Proxy(
-            new Map(),
-            {
-                set(target, property, value)
-                {
-                    if (property.startsWith('_'))
-                        throw Error('Cannot set context properties with keys starting with _');
-
-                    target.set(property, value);
-
-                    return true;
-                },
-
-                get(target, property)
-                {
-                    if (property === _setParent.name)
-                        return _setParent.bind(null);
-
-                    if (target.has(property))
-                        return target.get(property);
-                    
-                    if (parent)
-                        return parent[property];
-
-                    return undefined;
-                }
-            });
-
-    return context;
-}
-
-class DeferredElement
-{
-    context;
-    impl;
-
-    constructor(context, impl)
-    {
-        this.context    = context;
-        this.impl       = impl;
-    }
-}
-
-/** Injected by the JSX compiler as needed */
-export function __nakedjsx__createFragment(props)
-{
-    return props.children;
-}
-
-/** Injected by the JSX compiler as needed */
-export function __nakedjsx__createElement(tag, props, ...children)
-{
-    if (children.length)
-        children =
-            children
-                //
-                // When JSX children are placed like <parent>{children}<child></parent>
-                // We end up with [[...chidren],child] which we need to flatten.
-                //
-                .flat()
-                // <p>{false && ...}<\/p> will result in an undefined child
-                .filter(child => child !== undefined);
-
-    if (tag === __nakedjsx__createFragment)
-        return children;
-
-    //
-    // Each element has a magical context prop that proxies
-    // context data from parent elements (when attached).
-    //
-    // For this to be useful, parents JSX functions need to execute
-    // before child tags - otherwise it would be too late
-    // to provide context data to the child.
-    //
-    // The natural order of execution is depth first, so
-    // we jump through a few hoops to change that.
-    //
-    
-    props = props ?? {};
-    props.context = makeContext();
-
-    if (children.length)
-        for (const child of children)
-            if (child instanceof DeferredElement)
-                child.context._setParent(props.context);
-    
-    return new DeferredElement(props.context, createElement.bind(null, tag, props, children));
-}
-
-function createElement(tag, props, children)
-{
-    if (typeof tag === "function")
-    {
-        // Make child elements selectively placeable via {props.children}
-        props.children = children;
-
-        const deferredRender = tag(props);
-        connectContexts(props.context, deferredRender);
-        return renderNow(deferredRender);
-    }
-
-    //
-    // We're dealing with regular HTML, not a JSX component
-    //
-
-    const { document }  = asyncLocalStorage.getStore();
-    const element       = document.createElement(tag, props.context);
-    const eventHandlers = [];
-
-    for (const [name, value] of Object.entries(props))
-    {
-        if (!value)
-            continue;
-        
-        if (name.startsWith('on'))
-            eventHandlers.push({ name, value});
-        else if (name === 'className')
-            element.setAttribute('class', value);
-        else
-        {
-            if (name === 'css')
-                document.elementsWithCss.push(element);
-
-            element.setAttribute(name, value);
-        }
-    }
-    
-    //
-    // Generate event handling JS
-    //
-    // It's done this way so that terser tree shaking
-    // doesn't remove otherwise unused handlers in the client js,
-    // and also that the function names can be mangled.
-    //
-
-    if (eventHandlers.length)
-    {
-        // It will need an id to hook up the handler
-        if (element.id === undefined)
-            element.setAttribute('id', Page.UniqueId());
-
-        let js = `  var e = document.getElementById(${JSON.stringify(element.id)});\n`;
-
-        for (const { name, value } of eventHandlers)
-        {
-            const onEvent = name.toLowerCase();
-            // wrap the code with a function that sets 'this' and 'event' to expected values
-            js += `  e.${onEvent} = (function(event) { ${value} }).bind(e);\n`;
-        }
-        
-        Page.AppendJs(`(()=>{\n${js}})()`);
-    }
-
-    children.forEach((child) => element.appendChild(renderNow(child)));
-
-    return element;
-}
-
-function connectContexts(parentContext, deferredRender)
-{
-    if (Array.isArray(deferredRender))
-    {
-        deferredRender.forEach(connectContexts.bind(null, parentContext));
-        return;
-    }
-    else if (deferredRender instanceof DeferredElement)
-    {
-        if (deferredRender.context) // can be null if Page.EvaluateNow is used
-            deferredRender.context._setParent(parentContext);
-
-        return;
-    }
-}
-
-function renderNow(deferredRender)
-{
-    if (Array.isArray(deferredRender))
-        return deferredRender.flat().map(renderNow);
-    else if (deferredRender instanceof DeferredElement)
-        return deferredRender.impl();
-    else if (deferredRender === undefined || deferredRender === null || deferredRender === false || deferredRender === true)
-        return undefined;
-    else if (typeof deferredRender == 'string')
-        return deferredRender;
-    else
-        // Convert anything else, number etc, to a string
-        return `${deferredRender}`
-}
-
 function hasAddedClientJs(clientJs)
 {
     const thisBuild = getCurrentJob().page.thisBuild;
@@ -464,15 +265,11 @@ export const Page =
             const finalCss = finaliseCssClasses(commonCss, document.elementsWithCss, page.thisBuild.scopedCssSet);
             if (finalCss)
                 this.AppendHead(
-                    __nakedjsx__createElement(
+                    jsx(
                         'style',
-                        null,
-                        __nakedjsx__createElement(
-                            'raw-content',
-                            {
-                                content: finalCss
-                            })
-                        )
+                        {
+                            children: jsx('raw-content', { content: finalCss })
+                        })
                     );
 
             //
@@ -487,7 +284,7 @@ export const Page =
 
                 // Equivalent to this.AppendHead(<script src="/nakedjsx:/client.js" async defer />);
                 this.AppendHead(
-                    __nakedjsx__createElement(
+                    jsx(
                         'script',
                         {
                             src: '/nakedjsx:/client.js',
@@ -501,7 +298,7 @@ export const Page =
             {
                 // Equivalent to this.AppendHead(<script src={src} async defer />);
                 this.AppendHead(
-                    __nakedjsx__createElement(
+                    jsx(
                         'script',
                         {
                             src,
@@ -515,15 +312,11 @@ export const Page =
             {
                 // Equivalent to this.AppendBody(<script><raw-content content={content} /></script>);
                 this.AppendBody(
-                    __nakedjsx__createElement(
+                    jsx(
                         'script',
-                        null,
-                        __nakedjsx__createElement(
-                            'raw-content',
-                            {
-                                content
-                            })
-                        )
+                        {
+                            children: jsx('raw-content', { content })
+                        })
                     );
             }
 
@@ -607,4 +400,231 @@ export const Page =
             return getCurrentJob().developmentMode;
         }
     };
+
+/* This export is needed for JSX edge case that will probably never happen to a NakedJSX user: https://github.com/facebook/react/issues/20031#issuecomment-710346866*/
+export function createElement(tag, props, ...children)
+{
+    if (children.length == 1)
+    {
+        props.children = children[0];
+        return jsx(tag, props);
+    }
+    else if (children.length > 1)
+    {
+        props.children = children;
+        return jsxs(tag, props);
+    }
+    else
+        return jsx(tag, props);
+}
+
+export const Fragment = Symbol();
+
+/** Injected by the JSX compiler for more than one child */
+export function jsxs(tag, props)
+{
+    if (tag === Fragment)
+        return props.children;
+
+    //
+    // Each element has a magical context prop that proxies
+    // context data from parent elements (when attached).
+    //
+    // For this to be useful, parents JSX functions need to execute
+    // before child tags - otherwise it would be too late
+    // to provide context data to the child.
+    //
+    // The natural order of execution is depth first, so
+    // we jump through a few hoops to change that.
+    //
     
+    props.context = makeContext();
+
+    for (const child of props.children)
+        if (child instanceof DeferredElement)
+            child.context._setParent(props.context);
+    
+    return new DeferredElement(props.context, createElementImpl.bind(null, tag, props));
+}
+
+/** Injected by the JSX compiler for zero or one children */
+export function jsx(tag, props)
+{
+    if (tag === Fragment)
+        return props.children;
+
+    //
+    // See comment in jsxs() regarding contexts
+    //
+    
+    props.context = makeContext();
+
+    if (props.children instanceof DeferredElement)
+        props.children.context._setParent(props.context);
+    
+    return new DeferredElement(props.context, createElementImpl.bind(null, tag, props));
+}
+
+function createElementImpl(tag, props)
+{
+    if (typeof tag === "function")
+    {
+        // Allow tag implementations to assume children is an array
+        if (!Array.isArray(props.children))
+            props.children = [props.children];
+
+        const deferredRender = tag(props);
+        connectContexts(props.context, deferredRender);
+        return renderNow(deferredRender);
+    }
+
+    //
+    // We're dealing with regular HTML, not a JSX component
+    //
+
+    const document      = getDocument();
+    const element       = document.createElement(tag, props.context);
+    const eventHandlers = [];
+
+    for (const [name, value] of Object.entries(props))
+    {
+        if (!value)
+            continue;
+    
+        // skip magic props
+        if (name === 'children' || name === 'context')
+            continue;
+        
+        if (name.startsWith('on'))
+            eventHandlers.push({ name, value});
+        else if (name === 'className')
+            element.setAttribute('class', value);
+        else
+        {
+            if (name === 'css')
+                document.elementsWithCss.push(element);
+
+            element.setAttribute(name, value);
+        }
+    }
+    
+    //
+    // Generate event handling JS
+    //
+    // It's done this way so that terser tree shaking
+    // doesn't remove otherwise unused handlers in the client js,
+    // and also that the function names can be mangled.
+    //
+
+    if (eventHandlers.length)
+    {
+        // It will need an id to hook up the handler
+        if (element.id === undefined)
+            element.setAttribute('id', Page.UniqueId());
+
+        let js = `  var e = document.getElementById(${JSON.stringify(element.id)});\n`;
+
+        for (const { name, value } of eventHandlers)
+        {
+            const onEvent = name.toLowerCase();
+            // wrap the code with a function that sets 'this' and 'event' to expected values
+            js += `  e.${onEvent} = (function(event) { ${value} }).bind(e);\n`;
+        }
+        
+        Page.AppendJs(`(()=>{\n${js}})()`);
+    }
+
+    if (Array.isArray(props.children))
+    {
+        for (const child of props.children)
+            element.appendChild(renderNow(child));
+    }
+    else
+        element.appendChild(renderNow(props.children));
+
+    return element;
+}
+
+class DeferredElement
+{
+    context;
+    impl;
+
+    constructor(context, impl)
+    {
+        this.context    = context;
+        this.impl       = impl;
+    }
+}
+
+function renderNow(deferredRender)
+{
+    if (Array.isArray(deferredRender))
+        return deferredRender.map(renderNow);
+    else if (deferredRender instanceof DeferredElement)
+        return deferredRender.impl();
+    else if (deferredRender === undefined || deferredRender === null || deferredRender === false || deferredRender === true)
+        return undefined;
+    else if (typeof deferredRender === 'string')
+        return deferredRender;
+    else
+        // Convert anything else, number etc, to a string
+        return `${deferredRender}`
+}
+
+function makeContext()
+{
+    let parent;
+
+    function _setParent(newParent)
+    {
+        parent = newParent;
+    }
+    
+    const context =
+        new Proxy(
+            new Map(),
+            {
+                set(target, property, value)
+                {
+                    if (property.startsWith('_'))
+                        throw Error('Cannot set context properties with keys starting with _');
+
+                    target.set(property, value);
+
+                    return true;
+                },
+
+                get(target, property)
+                {
+                    if (property === _setParent.name)
+                        return _setParent.bind(null);
+
+                    if (target.has(property))
+                        return target.get(property);
+                    
+                    if (parent)
+                        return parent[property];
+
+                    return undefined;
+                }
+            });
+
+    return context;
+}
+
+function connectContexts(parentContext, deferredRender)
+{
+    if (Array.isArray(deferredRender))
+    {
+        deferredRender.forEach(connectContexts.bind(null, parentContext));
+        return;
+    }
+    else if (deferredRender instanceof DeferredElement)
+    {
+        if (deferredRender.context) // can be null if Page.EvaluateNow is used
+            deferredRender.context._setParent(parentContext);
+
+        return;
+    }
+}

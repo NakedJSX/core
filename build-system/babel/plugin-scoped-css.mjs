@@ -45,21 +45,49 @@ export default function(babel, options)
                 {
                     const callee = nodePath.node.callee;
 
-                    if (callee.type !== 'Identifier' || callee.name !== '__nakedjsx__createElement')
+                    if (!t.isIdentifier(callee) || callee.name !== '__nakedjsx__createElement')
                         return;
 
                     //
                     // It's a call to __nakedjsx__createElement(tagName, props, ...children).
+                    //
+
+                    //
+                    // If it's a call to __nakedjsx__createElement(__nakedjsx__createFragment, null, ...children)
+                    // we can optimise this to just 'children' for a smaller build
+                    //
+
+                    const firstArg = nodePath.node.arguments[0];
+
+                    if (t.isIdentifier(firstArg) && firstArg.name === '__nakedjsx__createFragment')
+                    {
+                        if (!t.isNullLiteral(nodePath.node.arguments[1]))
+                            fatal('Unexpected use of __nakedjsx__createFragment: ' + nodePath.toString());
+                        
+                        nodePath.replaceWith(t.arrayExpression(nodePath.node.arguments.slice(2)));
+                        return;
+                    }
+
+                    //
                     // Do the props contain "css": ... ?
                     //
 
-                    if (nodePath.node.arguments[1].type !== 'ObjectExpression')
+                    if (!t.isObjectExpression(nodePath.node.arguments[1]))
                         return;
                     
                     const objectPath        = nodePath.get('arguments.1');
                     const propsPath         = objectPath.get('properties');
                     const cssPropPath       = propsPath.find(prop => prop.node.key.name === 'css');
                     const classNamePropPath = propsPath.find(prop => prop.node.key.name === 'className');
+                    const contextPropPath   = propsPath.find(prop => prop.node.key.name === 'context');
+
+                    // rename existing className to class for a smaller runtime
+                    if (classNamePropPath)
+                        classNamePropPath.node.key.name = 'class';
+                    
+                    // remove magic context prop path for now, effectively reserving it
+                    if (contextPropPath)
+                        contextPropPath.remove();
                     
                     if (!cssPropPath)
                         return;
@@ -92,7 +120,7 @@ export default function(babel, options)
                     }
                     else
                     {
-                        const classNameProp = t.objectProperty(t.identifier("className"), t.stringLiteral(cssClassName));
+                        const classNameProp = t.objectProperty(t.identifier('class'), t.stringLiteral(cssClassName));
                         objectPath.pushContainer('properties', classNameProp);
                     }
                 }

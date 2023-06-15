@@ -12,11 +12,13 @@ Element.prototype.appendChild =
         {
             for (const childArrayMember of child)
                 this.appendChild(childArrayMember);
+        
+            return child;
         }
         else if (typeof child === 'string')
-            originalAppendChild.call(this, document.createTextNode(child));
-        else
-            originalAppendChild.call(this, child);
+            return originalAppendChild.call(this, document.createTextNode(child));
+        else if (child)
+            return originalAppendChild.call(this, child);
     };
 
 export function __nakedjsx__createElement(tag, props, ...children)
@@ -28,7 +30,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
         // Make child elements selectively placeable via {props.children}
         props.children = children;
 
-        return tag(props, children);
+        return tag(props);
     }
 
     //
@@ -37,21 +39,21 @@ export function __nakedjsx__createElement(tag, props, ...children)
 
     const element = document.createElement(tag);
 
-    Object.entries(props).forEach(
-        ([name, value]) =>
+    for (const [name, value] of Object.entries(props))
+    {
+        if (name.startsWith('on'))
         {
-            if (name.startsWith('on'))
+            const lowercaseName = name.toLowerCase();
+            
+            if (lowercaseName in window)
             {
-                const lowercaseName = name.toLowerCase();
-                
-                if (lowercaseName in window)
-                    element.addEventListener(lowercaseName.substring(2), value);
+                element.addEventListener(lowercaseName.substring(2), value);
+                continue;
             }
-            else if (name === 'className')
-                element.setAttribute('class', value);
-            else
-                element.setAttribute(name, value);
-        });
+        }
+        
+        element.setAttribute(name, value);
+    };
     
     for (const child of children)
         element.appendChild(child);
