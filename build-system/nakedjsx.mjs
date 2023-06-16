@@ -124,6 +124,8 @@ export class NakedJSX extends EventEmitter
     #pagesInProgress;
     #pagesWithErrors;
 
+    #clientJsOrigin;
+
     #watcher;
     #watchFiles             = new Map(); // filename -> Set<page>
 
@@ -868,6 +870,9 @@ ${feebackChannels}
         // This allows async events to safely queue up pages to build, during the build
         this.#pagesInProgress   = this.#pagesToBuild;
         this.#pagesToBuild      = new Set();
+
+        // Clear this out each build.
+        this.#clientJsOrigin    = {};
         
         //
         // Start building.
@@ -1458,7 +1463,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             };
 
                 // Relative path to a source file?
-                const resolvedRelativePath = path.join(path.dirname(importer), id);
+                const resolvedRelativePath = path.join(path.dirname(builder.#clientJsOrigin[importer] ?? importer), id);
                 if (fs.existsSync(resolvedRelativePath))
                     return  {
                                 id: resolvedRelativePath,
