@@ -87,6 +87,8 @@ export class NakedJSX
     #pagesInProgress;
     #pagesWithErrors;
 
+    #clientJsOrigin;
+
     #watcher;
     #watchFiles             = new Map(); // filename -> Set<page>
     #watchFilesIgnore;
@@ -658,6 +660,9 @@ ${feebackChannels}
         // This allows async events to safely queue up pages to build, during the build
         this.#pagesInProgress   = this.#pagesToBuild;
         this.#pagesToBuild      = new Set();
+
+        // Clear this out each build.
+        this.#clientJsOrigin    = {};
         
         //
         // Start building.
@@ -1230,7 +1235,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             };
 
                 // Relative path to a source file?
-                const resolvedRelativePath = path.join(path.dirname(importer), id);
+                const resolvedRelativePath = path.join(path.dirname(builder.#clientJsOrigin[importer] ?? importer), id);
                 if (fs.existsSync(resolvedRelativePath))
                     return  {
                                 id: resolvedRelativePath,
@@ -1591,6 +1596,14 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         const tmpSrcFile            = this.#versionedTmpFilePath(inlineJsFilename);
         const inputSourcemapRemap   = {};
 
+        //
+        // Relative imports from client js files need to be relative from the original
+        // file, not the rolled up tmpSrcFile. Our import plugin uses this object to
+        // determine the original source file.
+        //
+
+        this.#clientJsOrigin[tmpSrcFile] = page.clientJsFileIn;
+
         // Ensure each inline js ends with ';' before joining
         const inlineJs =
             thisBuild.inlineJs
@@ -1674,7 +1687,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     {
                         const fullPath = path.resolve(path.dirname(sourcemapPath), relativeSourcePath);
 
-                        
                         if (inputSourcemapRemap[fullPath])
                         {
                             // We remapped this path, convert to be relative to the sourcemap path dirname
