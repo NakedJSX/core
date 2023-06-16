@@ -14,7 +14,6 @@ import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
-import inject from '@rollup/plugin-inject';
 import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
@@ -1463,7 +1462,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             };
 
                 // Relative path to a source file?
-                const resolvedRelativePath = path.join(path.dirname(builder.#clientJsOrigin[importer] ?? importer), id);
+                const resolvedRelativePath = path.join(path.dirname(self.#clientJsOrigin[importer] ?? importer), id);
                 if (fs.existsSync(resolvedRelativePath))
                     return  {
                                 id: resolvedRelativePath,
@@ -1862,21 +1861,24 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     async #rollupClientJs(page, combinedJs)
     {
+        const inlineJsFilename = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
+        
+        //
+        // Relative imports from client js files need to be relative from the original
+        // file, not the rolled up tmpSrcFile. Our import plugin uses this object to
+        // determine the original source file.
+        //
+
+        this.#clientJsOrigin[inlineJsFilename] = page.clientJsFileIn;
+
         // Check the cache first. Helps a LOT in template engine mode
-        const cachedResult = this.#clientJsRollupCache.get(combinedJs);
+        const cacheKey      = inlineJsFilename + combinedJs;
+        const cachedResult  = this.#clientJsRollupCache.get(cacheKey);
         if (cachedResult)
             return cachedResult;
         
         const { thisBuild } = page;
 
-        //
-        // Although we have a unique folder name, it seems we also need a unique
-        // filename to work around vscode breakpoint binding bugs when repeatedly
-        // dynamically import()ing.
-        //
-
-        const inlineJsFilename = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
-        
         const inputOptions =
             {
                 input:   inlineJsFilename,
@@ -2006,7 +2008,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         await Promise.all(promises);
 
         // Cache and return
-        this.#clientJsRollupCache.set(combinedJs, result);
+        this.#clientJsRollupCache.set(cacheKey, result);
         return result;
     }
 
