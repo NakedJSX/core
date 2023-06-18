@@ -1,14 +1,29 @@
 import path from 'node:path';
-
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
-import { finaliseCssClasses } from '../../build-system/css.mjs';
-import { ServerDocument } from './document.mjs';
-import { convertToAlphaNum, log, semicolonify } from '../../build-system/util.mjs';
+import * as _parser from "@babel/parser";
+import _traverse from "@babel/traverse";
+const babel =
+    {
+        parse:      _parser.parse,
+        traverse:   _traverse.default
+    };
 
-const interBuildCache   = new Map();
-const asyncLocalStorage = new AsyncLocalStorage();
+import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
+import { ServerDocument, CachingHtmlRenderer, Element } from './document.mjs';
+import { convertToAlphaNum, log, semicolonify } from '../../build-system/util.mjs';
+import { LruCache } from '../../build-system/cache.mjs';
+import { loadCss } from '../../build-system/css.mjs';
+
+const interBuildCache           = new Map();
+const unboundIdentifierCache    = new LruCache('unbound identifiers', 1024);
+const asyncLocalStorage         = new AsyncLocalStorage();
+
+// Generated 2023-06-17 in Chrome using: JSON.stringify(Object.keys(window).filter(key => key.startsWith('on')))
+const validHtmlEventHandlers =
+    new Set(
+        ["onsearch","onappinstalled","onbeforeinstallprompt","onbeforexrselect","onabort","onbeforeinput","onblur","oncancel","oncanplay","oncanplaythrough","onchange","onclick","onclose","oncontextlost","oncontextmenu","oncontextrestored","oncuechange","ondblclick","ondrag","ondragend","ondragenter","ondragleave","ondragover","ondragstart","ondrop","ondurationchange","onemptied","onended","onerror","onfocus","onformdata","oninput","oninvalid","onkeydown","onkeypress","onkeyup","onload","onloadeddata","onloadedmetadata","onloadstart","onmousedown","onmouseenter","onmouseleave","onmousemove","onmouseout","onmouseover","onmouseup","onmousewheel","onpause","onplay","onplaying","onprogress","onratechange","onreset","onresize","onscroll","onsecuritypolicyviolation","onseeked","onseeking","onselect","onslotchange","onstalled","onsubmit","onsuspend","ontimeupdate","ontoggle","onvolumechange","onwaiting","onwebkitanimationend","onwebkitanimationiteration","onwebkitanimationstart","onwebkittransitionend","onwheel","onauxclick","ongotpointercapture","onlostpointercapture","onpointerdown","onpointermove","onpointerrawupdate","onpointerup","onpointercancel","onpointerover","onpointerout","onpointerenter","onpointerleave","onselectstart","onselectionchange","onanimationend","onanimationiteration","onanimationstart","ontransitionrun","ontransitionstart","ontransitionend","ontransitioncancel","onafterprint","onbeforeprint","onbeforeunload","onhashchange","onlanguagechange","onmessage","onmessageerror","onoffline","ononline","onpagehide","onpageshow","onpopstate","onrejectionhandled","onstorage","onunhandledrejection","onunload","ondevicemotion","ondeviceorientation","ondeviceorientationabsolute","onbeforematch","oncontentvisibilityautostatechange"]
+        );
 
 export async function runWithPageAsyncLocalStorage(callback)
 {
@@ -25,7 +40,7 @@ export async function runWithPageAsyncLocalStorage(callback)
                 document:   null,
                 refs:       new Map()
             }),
-        callback);
+        callback)
 }
 
 function setDocument(document)
@@ -40,21 +55,21 @@ function getDocument(document)
 
 function hasAddedClientJs(clientJs)
 {
-    const thisBuild = getCurrentJob().page.thisBuild;
+    const { thisRender } = getCurrentJob().page;
 
-    return thisBuild.inlineJsSet.has(clientJs);
+    return thisRender.inlineJsSet.has(clientJs);
 }
 
 function addClientJs(clientJs)
 {
-    const thisBuild = getCurrentJob().page.thisBuild;
+    const { thisRender } = getCurrentJob().page;
 
     //
     // Add this JS and remember we did.
     //
 
-    thisBuild.inlineJsSet.add(clientJs);
-    thisBuild.inlineJs.push(clientJs);
+    thisRender.inlineJsSet.add(clientJs);
+    thisRender.inlineJs.push(clientJs);
 }
 
 /**
@@ -153,6 +168,19 @@ export const Page =
             getDocument().body.appendChild(renderNow(child));
         },
 
+        // Page.Memo is not yet ready as it does not yet deal with rendering side effects like scoped CSS classes.
+        //
+        // /**
+        //  * In tempalte engine mode, caches the JSX output based on cacheKey. If cacheKey omitted, an attempt is made to generate one from all JavaScript identifiers used within the JSX.
+        //  * @param {*} jsx - JSX to wrap in a cache
+        //  * @param {*} cacheKey - 
+        //  * @returns 
+        //  */
+        // Memo(jsx, cacheKey)
+        // {
+        //     // Calls to this function are replaced with generated code at build time.
+        // },
+
         /**
          * Add one or more JavaScript statement to the page. A statement can be actual Javascript code, or a string containing it.
          * @param {...object} jsCode - JavaScript code, or string containing it, to be added
@@ -203,9 +231,9 @@ export const Page =
          */
         UniqueId()
         {
-            const { thisBuild } = getCurrentJob().page;
+            const { thisBuild, thisRender } = getCurrentJob().page;
 
-            return thisBuild.config.uniquePrefix + convertToAlphaNum(thisBuild.nextUniqueId++) + thisBuild.config.uniqueSuffix;
+            return thisBuild.config.uniquePrefix + convertToAlphaNum(thisRender.nextUniqueId++) + thisBuild.config.uniqueSuffix;
         },
 
         /**
@@ -218,7 +246,7 @@ export const Page =
         EvaluateNow(jsx)
         {
             const rendered = renderNow(jsx);
-            return new DeferredElement(makeContext(), () => rendered);
+            return DeferredElement.From(makeContext(), () => rendered);
         },
 
         /**
@@ -261,9 +289,15 @@ export const Page =
             // We have our page structure, it's now time to process CSS attributes
             //
 
-            // Equivalent to this.AppendHead(<style><raw-content content={finaliseCssClasses(__nakedjsx_get_document(), commonCss, page.thisBuild.scopedCssSet)}></raw-content></style>);
-            const finalCss = finaliseCssClasses(commonCss, document.elementsWithCss, page.thisBuild.scopedCssSet);
+            const finalCss =
+                loadCss(
+                    commonCss + page.thisBuild.scopedCssSet.collateAll(),
+                    {
+                        renameVariables: true
+                    });
+            
             if (finalCss)
+                // Equivalent to this.AppendHead(<style><raw-content content={finalCss} /></style>);
                 this.AppendHead(
                     jsx(
                         'style',
@@ -294,7 +328,7 @@ export const Page =
                     );
             }
 
-            for (const src of page.thisBuild.output.fileJs)
+            for (const src of page.thisRender.output.fileJs)
             {
                 // Equivalent to this.AppendHead(<script src={src} async defer />);
                 this.AppendHead(
@@ -308,7 +342,7 @@ export const Page =
                     );
             }
 
-            for (const content of page.thisBuild.output.inlineJs)
+            for (const content of page.thisRender.output.inlineJs)
             {
                 // Equivalent to this.AppendBody(<script><raw-content content={content} /></script>);
                 this.AppendBody(
@@ -401,6 +435,39 @@ export const Page =
         }
     };
 
+/** WARNING: This internal API is subject to change without notice. */
+export const __nakedjsx_page_internal__ =
+    {
+        getMemoCache(cacheId)
+        {
+            const memoCaches = getCurrentJob().page.thisBuild.cache.memo;
+            let cache = memoCaches[cacheId];
+            if (cache)
+                return cache;
+            
+            cache               = new LruCache(cacheId);
+            memoCaches[cacheId] = cache;
+
+            return cache;
+        },
+
+        memoCacheGet(cacheId, key)
+        {
+            const memoCache = this.getMemoCache(cacheId);
+            return memoCache.get(key);
+        },
+
+        memoCacheSet(cacheId, key, value)
+        {
+            const memoCache             = this.getMemoCache(cacheId);
+            const cachingHtmlRenderer   = new CachingHtmlRenderer(renderNow(value));
+
+            memoCache.set(key, cachingHtmlRenderer);
+
+            return cachingHtmlRenderer;
+        }
+    };
+
 /* This export is needed for JSX edge case that will probably never happen to a NakedJSX user: https://github.com/facebook/react/issues/20031#issuecomment-710346866*/
 export function createElement(tag, props, ...children)
 {
@@ -444,7 +511,10 @@ export function jsxs(tag, props)
         if (child instanceof DeferredElement)
             child.context._setParent(props.context);
     
-    return new DeferredElement(props.context, createElementImpl.bind(null, tag, props));
+    if (typeof tag === 'function')
+        return DeferredElement.From(props.context, tagImpl.bind(null, tag, props));
+    else
+        return DeferredElement.From(props.context, createElementImpl.bind(null, tag, props));
 }
 
 /** Injected by the JSX compiler for zero or one children */
@@ -462,84 +532,111 @@ export function jsx(tag, props)
     if (props.children instanceof DeferredElement)
         props.children.context._setParent(props.context);
     
-    return new DeferredElement(props.context, createElementImpl.bind(null, tag, props));
+    if (typeof tag === 'function')
+        return DeferredElement.From(props.context, tagImpl.bind(null, tag, props));
+    else
+        return DeferredElement.From(props.context, createElementImpl.bind(null, tag, props));
+}
+
+function findUnboundIdentifiers(code)
+{
+    const cachedResult = unboundIdentifierCache.get(code);
+    if (cachedResult)
+        return cachedResult;
+
+    const identifiers = new Set();
+
+    const ast = babel.parse(code);
+    babel.traverse(
+        ast,
+        {
+            Identifier(nodePath)
+            {
+                const binding = nodePath.scope.getBinding(nodePath.node.name);
+
+                if (!binding)
+                    identifiers.add(nodePath.node.name);
+            }
+        });
+
+    return unboundIdentifierCache.set(code, identifiers);
+}
+
+function tagImpl(tag, props)
+{
+    // Allow tag implementations to assume children is an array
+    if (!Array.isArray(props.children))
+        props.children = [props.children];
+
+    const deferredRender = tag(props);
+    connectContexts(props.context, deferredRender);
+    return renderNow(deferredRender);
 }
 
 function createElementImpl(tag, props)
 {
-    if (typeof tag === "function")
-    {
-        // Allow tag implementations to assume children is an array
-        if (!Array.isArray(props.children))
-            props.children = [props.children];
-
-        const deferredRender = tag(props);
-        connectContexts(props.context, deferredRender);
-        return renderNow(deferredRender);
-    }
-
     //
-    // We're dealing with regular HTML, not a JSX component
+    // We're dealing with a regular HTML element, not a JSX function
     //
 
-    const document      = getDocument();
-    const element       = document.createElement(tag, props.context);
-    const eventHandlers = [];
+    const { scopedCssSet } = getCurrentJob().page.thisBuild;
+
+    const element       = Element.From(tag, props.context);
+    const cssClasses    = new Set();
 
     for (const [name, value] of Object.entries(props))
     {
         if (!value)
             continue;
-    
+
         // skip magic props
         if (name === 'children' || name === 'context')
             continue;
+
+        const nameLowercase = name.toLowerCase();
         
-        if (name.startsWith('on'))
-            eventHandlers.push({ name, value});
+        if (validHtmlEventHandlers.has(nameLowercase))
+        {
+            //
+            // Each unbound identifier in an event handler must
+            // be a reference to global scope JS (or a bug).
+            //
+            // If it's a reference to something in client JS,
+            // we need to make sure that it's not tree shaken
+            // out of the final bundle (it might be the only
+            // reference).
+            //
+            // This approach prevents compressing of the name.
+            // IDEALLY we'd use the ability of terser to not
+            // remove specified unused identifiers, compress the
+            // name, and then update all event handler source
+            // that references the identifier. A lot of
+            // complexity for a small compression gain though.
+            //
+
+            for (const identifier of findUnboundIdentifiers(value))
+                Page.AppendJsIfNew(`window.${identifier} = ${identifier};`);
+
+            element.setAttribute(nameLowercase, value);
+        }
         else if (name === 'className')
-            element.setAttribute('class', value);
+            for (const className of value.split(/[\s]+/))
+                cssClasses.add(className);
+        else if (name === 'css')
+            cssClasses.add(scopedCssSet.getClassName(value));
         else
-        {
-            if (name === 'css')
-                document.elementsWithCss.push(element);
-
             element.setAttribute(name, value);
-        }
     }
-    
-    //
-    // Generate event handling JS
-    //
-    // It's done this way so that terser tree shaking
-    // doesn't remove otherwise unused handlers in the client js,
-    // and also that the function names can be mangled.
-    //
 
-    if (eventHandlers.length)
-    {
-        // It will need an id to hook up the handler
-        if (element.id === undefined)
-            element.setAttribute('id', Page.UniqueId());
-
-        let js = `  var e = document.getElementById(${JSON.stringify(element.id)});\n`;
-
-        for (const { name, value } of eventHandlers)
-        {
-            const onEvent = name.toLowerCase();
-            // wrap the code with a function that sets 'this' and 'event' to expected values
-            js += `  e.${onEvent} = (function(event) { ${value} }).bind(e);\n`;
-        }
-        
-        Page.AppendJs(`(()=>{\n${js}})()`);
-    }
+    if (cssClasses.size)
+        element.setAttribute('class', Array.from(cssClasses).join(' '));
 
     if (Array.isArray(props.children))
     {
         for (const child of props.children)
             element.appendChild(renderNow(child));
     }
-    else
+    else if (props.children)
         element.appendChild(renderNow(props.children));
 
     return element;
@@ -547,22 +644,48 @@ function createElementImpl(tag, props)
 
 class DeferredElement
 {
-    context;
-    impl;
+    static #pool = [];
 
-    constructor(context, impl)
+    context;
+    deferredRender;
+
+    static From(context, deferredRender)
     {
-        this.context    = context;
-        this.impl       = impl;
+        if (this.#pool.length)
+        {
+            const de = this.#pool.pop();
+
+            de.context         = context;
+            de.deferredRender  = deferredRender;
+
+            return de;
+        }
+
+        return new DeferredElement(context, deferredRender);
+    }
+
+    constructor(context, deferredRender)
+    {
+        this.context        = context;
+        this.deferredRender = deferredRender;
+    }
+
+    release()
+    {
+        DeferredElement.#pool.push(this);
     }
 }
 
 function renderNow(deferredRender)
 {
     if (Array.isArray(deferredRender))
-        return deferredRender.map(renderNow);
+        return deferredRender.map(renderNow)
     else if (deferredRender instanceof DeferredElement)
-        return deferredRender.impl();
+    {
+        const result = deferredRender.deferredRender();
+        deferredRender.release();
+        return result;
+    }
     else if (deferredRender === undefined || deferredRender === null || deferredRender === false || deferredRender === true)
         return undefined;
     else if (typeof deferredRender === 'string')

@@ -33,49 +33,52 @@ function empty(s)
     return false;
 }
 
-class Element
+export class Element
 {
-    #tagName;
-    #context;
-    #id;
-    #attributes;
-    #children;
+    static #pool = [];
+
+    tagName;
+    context;
+    id;
+    attributes;
+    children;
+
+    static From(tagName, context)
+    {
+        if (this.#pool.length)
+        {
+            const element = this.#pool.pop();
+
+            element.tagName = tagName;
+            element.content = context;
+            element.id      = undefined;
+
+            element.children.length = 0;
+            element.attributes.clear();
+
+            return element;
+        }
+
+        return new Element(tagName, context);
+    }
 
     constructor(tagName, context)
     {
-        this.#tagName       = tagName ? tagName.toLowerCase() : undefined;
-        this.#context       = context;
-        this.#children      = [];
-        this.#attributes    = {};
+        this.tagName    = tagName;
+        this.context    = context;
+        this.children   = [];
+        this.attributes = new Map();
     }
 
-    get context()
+    release()
     {
-        return this.#context;
-    }
-
-    get id()
-    {
-        return this.#id;
-    }
-
-    get tagName()
-    {
-        return this.#tagName;
-    }
-
-    get attributes()
-    {
-        return this.#attributes;
-    }
-
-    get children()
-    {
-        return this.#children;
+        Element.#pool.push(this);
     }
 
     setAttribute(key, value)
     {
+        requireValidAttributeName(key);
+
         if (key === 'context')
             return; // already set at construction
 
@@ -84,7 +87,7 @@ class Element
             return;
 
         if (key === 'id')
-            this.#id = value;
+            this.id = value;
 
         if (key === 'ref')
         {
@@ -92,7 +95,7 @@ class Element
             return;
         }
         
-        this.#attributes[key] = value;
+        this.attributes.set(key, value);
     }
 
     appendChild(child)
@@ -100,7 +103,7 @@ class Element
         //
         // Limit what types can be added as child nodes.
         //
-        // In particular we want to prevent a boolean false from being added,
+        // In particular we want to prevent a boolean from being added,
         // as that lets us use JSX like:
         //
         // { val > 0 && <some JSX> }
@@ -119,12 +122,12 @@ class Element
         switch (typeof child)
         {
             case 'object':
-                if (child.constructor.name === 'Element')
-                    this.#children.push(child);
+                if (child.toHtml)
+                    this.children.push(child);
                 break;
 
             case 'string':
-                this.#children.push(child);
+                this.children.push(child);
                 break;
         }
 
@@ -137,24 +140,21 @@ class Element
 
         var html;
 
-        if (this.#tagName)
+        if (this.tagName)
         {
             //
             // Sometimes we want to inject a raw fragment, such as an SVG.
             // We do this via a custom raw-content tag with a content attribute.
             //
 
-            if (this.#tagName === 'raw-content')
-                return this.#attributes.content;
+            if (this.tagName === 'raw-content')
+                return this.attributes.get('content');
 
-            requireValidTagName(this.#tagName);
-
-            html = '<' + this.#tagName;
+            html = '<' + this.tagName;
 
             // Attributes
-            for (let [key, value] of Object.entries(this.#attributes))
+            for (const [key, value] of this.attributes.entries())
             {
-                requireValidAttributeName(key);
                 html += ' ' + key;
                 
                 switch (typeof value)
@@ -182,31 +182,104 @@ class Element
 
             html += '>';
 
-            if (voidElements.has(this.#tagName))
+            if (voidElements.has(this.tagName))
                 return html;
         }
         else
             html = ''; /* Text node */
 
-        this.#children.forEach(
-            child =>
+        for (const child of this.children)
+        {
+            // if (child.toHtml)
+            if (child instanceof Element)
             {
-                const type = typeof child;
+                html += child.toHtml(renderContext);
+                child.release();
+            }
+            else if (typeof child === 'string')
+                html += escapeHtml(child);
+        }
 
-                if (type === 'object' && child.constructor.name === 'Element')
-                    html += child.toHtml(renderContext);
-                else if (type === 'string')
-                    html += escapeHtml(child);
-                
-                //
-                // Other types not supported.
-                //
-            });
-        
-        if (this.#tagName)
-            html += '</' + this.#tagName + '>';
+        if (this.tagName)
+            html += '</' + this.tagName + '>';
 
         return html;
+    }
+}
+
+/** Caching proxy for a single element */
+export class CachingElementProxy
+{
+    key;
+    cacheMap;
+    element;
+
+    constructor(key, cacheMap, element)
+    {
+        this.key        = key;
+        this.cacheMap   = cacheMap;
+        this.element    = element;
+    }
+
+    deferredRender()
+    {
+        return this;
+    }
+
+    toHtml(renderContext)
+    {
+        let html = this.cacheMap.get(this.key)
+        if (html)
+            return html;
+
+        if (this.element.toHtml)
+            html = this.element.toHtml(renderContext);
+        else if (typeof this.element === 'string')
+            html = escapeHtml(this.element);
+
+        this.cacheMap.set(this.key, html);
+        return html;
+    }
+}
+
+/** Caching proxy for a an array of element */
+export class CachingHtmlRenderer
+{
+    #html;
+    #elements;
+
+    constructor(elements)
+    {
+        this.#elements = elements;
+    }
+
+    deferredRender()
+    {
+        return this;
+    }
+
+    toHtml(renderContext)
+    {
+        if (this.#html)
+            return this.#html;
+        
+        this.html = '';
+
+        for (const element of this.#elements)
+        {
+            if (!element)
+                continue;
+            
+            if (element.toHtml)
+                this.#html += element.toHtml(renderContext);
+            else if (typeof element === 'string')
+                this.#html += escapeHtml(element);
+        }
+
+        // Don't need the elements anymore
+        this.#elements = null;
+        
+        return this.#html;
     }
 }
 
@@ -216,16 +289,11 @@ export class ServerDocument
     {
         this.elementsWithCss = [];
 
-        this.documentElement = new Element("html");
+        this.documentElement = Element.From("html");
         this.documentElement.setAttribute("lang", lang);
 
-        this.head = this.documentElement.appendChild(new Element("head"));
-        this.body = this.documentElement.appendChild(new Element("body"));
-    }
-
-    createElement(tagName, context)
-    {
-        return new Element(tagName, context);
+        this.head = this.documentElement.appendChild(Element.From("head"));
+        this.body = this.documentElement.appendChild(Element.From("body"));
     }
 
     toHtml(renderContext)
@@ -242,18 +310,12 @@ function requireValidAttributeName(attributeName)
      */
 
     if (/[^a-zA-Z0-9-]/.test(attributeName))
-        throw "Invalid attribute name: " + attributeName;
-}
-
-function requireValidTagName(tagName)
-{
-    if (/[^a-zA-Z0-9]/.test(tagName))
-        throw "Invalid tag name: " + tagName;
+        throw Error("Invalid attribute name: " + attributeName);
 }
 
 function escapeHtml(text)
 {
-    var map =
+    const htmlEscapeMap =
         {
             '&': '&amp;',
             '<': '&lt;',
@@ -261,11 +323,9 @@ function escapeHtml(text)
             '"': '&quot;',
             "'": '&#039;'
         };
-    
+
     return  text.replace(
-                /[&<>"']/g,
-                function(m)
-                {
-                    return map[m];
-                });
+        /[&<>"']/g,
+        (m) => htmlEscapeMap[m]
+        );
 }

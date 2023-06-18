@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { LruCache } from './cache.mjs';
 
 let benchmarkEnable = false;
 let benchmarkStart  = null;
@@ -90,9 +91,35 @@ export function warn(message)
     console.warn(`${boldOn}${formatLogMessaage(message, 'WARNING: ')}${boldOff}`);
 }
 
-export function err(message)
+/** logs stacktrace if not logged before */
+
+let nextStackId     = 0;
+const uniqueStacks  = new LruCache('__stack__', undefined, true);
+
+export function err(errorOrMessage)
 {
-    console.error(`${boldOn}${formatLogMessaage(message, 'ERROR: ')}${boldOff}`);
+    function formatErrorMessage(message)
+    {
+        return `${boldOn}${formatLogMessaage(message, 'ERROR: ')}${boldOff}`
+    }
+
+    if (errorOrMessage instanceof Error)
+    {
+        const stack = errorOrMessage.stack;
+        let stackId = uniqueStacks.get(stack);
+
+        if (stackId !== undefined)
+            console.error(formatErrorMessage(`${errorOrMessage.message}\n (stacktrace previously logged with ID: __stack_${stackId}__)`));
+        else
+        {
+            stackId = nextStackId++;
+            uniqueStacks.set(stack, stackId);
+
+            console.error(formatErrorMessage(`Stacktrace ID: __stack_${stackId}__\n`), stack);
+        }
+    }
+    else
+        console.error(formatErrorMessage(errorOrMessage));
 }
 
 export function fatal(message, lastHurrahCallback)
@@ -110,7 +137,7 @@ export function jsonClone(src)
     return JSON.parse(JSON.stringify(src));
 }
 
-export function convertToAlphaNum(value, digitSymbols)
+export function convertToAlphaNum(value)
 {
     return convertToBase(value, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
 }
@@ -191,4 +218,12 @@ export function merge(target, source, loopPreventor = new Set())
         else
             target[key] = value;
     }
+}
+
+export function *uniqueGenerator(prefix, suffix)
+{
+    let nextUniqueIndex = 0;
+
+    for (;;)
+        yield `${prefix}${convertToAlphaNum(nextUniqueIndex++)}${suffix}`;
 }

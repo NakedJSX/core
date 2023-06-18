@@ -171,34 +171,6 @@ export class ScopedCssSet
     }
 }
 
-export function finaliseCssClasses(commonCss, elementsWithCss, scopedCssSet)
-{
-    //
-    // Now that the document is complete, process all elements that have a CSS attribute.
-    // and output a bunch of CSS classes, deduplicating as appropriate.
-    //
-
-    for (const element of elementsWithCss)
-    {
-        let className = scopedCssSet.getClassName(element.attributes.css)
-        delete element.attributes.css;
-        
-        if (!className)
-            return;
-
-        if (element.attributes.class)
-            element.attributes.class += ' ' + className;
-        else
-            element.attributes.class = className;
-    }
-
-    return loadCss(
-        commonCss + scopedCssSet.collateAll(),
-        {
-            renameVariables: true
-        });
-}
-
 export function loadCss(input, options)
 {
     const cacheKey      = input + JSON.stringify(options)

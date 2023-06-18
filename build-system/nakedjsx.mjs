@@ -14,6 +14,7 @@ import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
+import inject from '@rollup/plugin-inject';
 import jsBeautifier from 'js-beautify';
 
 import { ScopedCssSet, loadCss } from './css.mjs'
@@ -129,8 +130,6 @@ export class NakedJSX extends EventEmitter
     #watchFiles             = new Map(); // filename -> Set<page>
 
     #rollupPlugins;
-
-    #clientJsRollupCache    = new Map();
 
     //
     // This cache is used internally by our import plugin.
@@ -535,25 +534,33 @@ ${feebackChannels}
 
         const htmlResult =
             await new Promise(
-                async (resolve) =>
+                async (resolve, reject) =>
                 {
-                    currentJob
-                        .run(
-                            {
-                                developmentMode:    this.#developmentMode,
-                                templateEngineMode: this.#templateEngineMode,
-                                commonCss:          this.#commonCss,
-                                page:               handler.page,
-                                onRenderStart:      this.#onRenderStart.bind(this),
-                                onRendered:         html => resolve(html)
-                            },
-                            () =>
-                            {
-                                runWithPageAsyncLocalStorage(
-                                    () => handler.render(context)
-                                    );
-                            }
-                        );
+                    await currentJob.run(
+                        {
+                            developmentMode:    this.#developmentMode,
+                            templateEngineMode: this.#templateEngineMode,
+                            commonCss:          this.#commonCss,
+                            page:               handler.page,
+                            onRenderStart:      this.#onRenderStart.bind(this),
+                            onRendered:         html => resolve(html)
+                        },
+                        async () =>
+                        {
+                            await runWithPageAsyncLocalStorage(
+                                async () =>
+                                {
+                                    try
+                                    {
+                                        await handler.render(context);        
+                                    }
+                                    catch (e)
+                                    {
+                                        err(e);
+                                        reject(e);
+                                    }
+                                });
+                        });
                 });
 
         return htmlResult;
@@ -775,7 +782,7 @@ ${feebackChannels}
             // Disconnect this page from watch file rebuilds for now
             for (let [, pages] of this.#watchFiles)
                 pages.delete(page);
-            
+
             //
             // In template engine mode, if we don't yet have a handler for this uri path then install a
             // handler that parks requests until the build is complete. If we do have a handler,
@@ -897,8 +904,12 @@ ${feebackChannels}
         if (this.#commonCssFile)
             this.#addWatchFile(this.#commonCssFile, page);
         
+        delete page.clientJsFileInContent;
         if (page.clientJsFileIn)
+        {
+            page.clientJsFileInContent = semicolonify((await fsp.readFile(page.clientJsFileIn)).toString());
             this.#addWatchFile(page.clientJsFileIn, page);
+        }
 
         //
         // Create an abort controller for graceful failure during the process
@@ -918,11 +929,17 @@ ${feebackChannels}
             });
         
         //
-        // page.thisBuild is a dedicated place for per-build data
+        // page.thisBuild is a dedicated place for per-build page data.
         //
 
         page.thisBuild =
             {
+                scopedCssSet: new ScopedCssSet(),
+                cache:
+                    {
+                        clientJsRollup: new Map(),
+                        memo:           {}  // will contain element and html caches for each memo
+                    },
                 config:
                     {
                         uniquePrefix: '_', // Used by Page.UniqueId()
@@ -943,19 +960,18 @@ ${feebackChannels}
         page.thisBuild.onPageCreate =
             () =>
             {
-                Object.assign(
-                    page.thisBuild,
+                page.thisRender =
                     {
                         nextUniqueId:   0,
                         inlineJs:       [],
                         inlineJsSet:    new Set(),
-                        scopedCssSet:   new ScopedCssSet(),
+                        noTreeShakeIds: new Set(),
                         output:
                             {
                                 inlineJs: [],
                                 fileJs:   []
                             }
-                    });
+                    };
             }
         
         if (page.configJsFile)
@@ -1616,7 +1632,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                                         },
                                     mangle:
                                         {
-                                            toplevel: true,
+                                            toplevel: true
                                         },
                                     sourceMap
                                 });
@@ -1646,6 +1662,15 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
                 this.#getImportPlugin(forClientJs)
             ];
+
+        if (forClientJs)
+            plugins.push(
+                inject(
+                    {
+                        '__nakedjsx__createElement':  ['@nakedjsx/core/client', '__nakedjsx__createElement'],
+                        '__nakedjsx__createFragment': ['@nakedjsx/core/client', '__nakedjsx__createFragment']
+                    })
+                );
         
         return plugins;
     }
@@ -1804,27 +1829,22 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     async #buildClientJs(page)
     {
-        const { thisBuild } = page;
+        const { thisRender } = page;
 
-        if (!page.clientJsFileIn && !thisBuild.inlineJs.length)
+        if (!page.clientJsFileInContent && !thisRender.inlineJs.length)
             return;
         
         // Ensure each inline js ends with ';' before joining
         const inlineJs =
-            thisBuild.inlineJs
+            thisRender.inlineJs
                 .map(js => semicolonify(js))
                 .join('\n\n');
 
-        const importInjection = `import { __nakedjsx__createElement, __nakedjsx__createFragment } from '@nakedjsx/core/client';\n`;
-        
         let combinedJs;
-        if (page.clientJsFileIn)
-        {
-            const clientJs = (await fsp.readFile(page.clientJsFileIn)).toString();
-            combinedJs = importInjection + semicolonify(clientJs) + '\n' + inlineJs;
-        }
+        if (page.clientJsFileInContent)
+            combinedJs = page.clientJsFileInContent + '\n' + inlineJs;
         else
-            combinedJs = importInjection + inlineJs;
+            combinedJs = inlineJs;
 
         //
         // combinedJs now contains the full client JS.
@@ -1843,7 +1863,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 this.#addWatchFile(watchFile, page);
 
             if (result.inlineJs)
-                thisBuild.output.inlineJs.push(result.inlineJs);
+                thisRender.output.inlineJs.push(result.inlineJs);
         }
         catch (error)
         {
@@ -1861,6 +1881,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
     async #rollupClientJs(page, combinedJs)
     {
+        const { thisBuild, thisRender } = page;
+
         const inlineJsFilename = page.htmlFile.replace(/.[^.]+$/, '-page-client.mjs');
         
         //
@@ -1872,19 +1894,17 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         this.#clientJsOrigin[inlineJsFilename] = page.clientJsFileIn;
 
         // Check the cache first. Helps a LOT in template engine mode
-        const cacheKey      = inlineJsFilename + combinedJs;
-        const cachedResult  = this.#clientJsRollupCache.get(cacheKey);
+        const cacheKey      = inlineJsFilename + '|' + combinedJs;
+        const cachedResult  = thisBuild.cache.clientJsRollup.get(cacheKey);
         if (cachedResult)
             return cachedResult;
-        
-        const { thisBuild } = page;
 
         const inputOptions =
             {
-                input:   inlineJsFilename,
+                input:      inlineJsFilename,
+                treeshake:  false,
                 plugins:
                     [
-                        // spyPlugin('spy-0'),
                         {
                             name: 'nakedjsx-client-source',
 
@@ -1900,7 +1920,6 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                                     return combinedJs;
                             }
                         },
-                        // spyPlugin('spy-1'),
                         ...this.#rollupPlugins.input.client
                     ]
             };
@@ -2000,7 +2019,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             else
             {
                 promises.push(this.#emitFile(page, chunk.fileName, chunk.code));
-                thisBuild.output.fileJs.push(path.basename(chunk.fileName));
+                thisRender.output.fileJs.push(path.basename(chunk.fileName));
             }
         }
 
@@ -2008,7 +2027,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         await Promise.all(promises);
 
         // Cache and return
-        this.#clientJsRollupCache.set(cacheKey, result);
+        thisBuild.cache.clientJsRollup.set(cacheKey, result);
         return result;
     }
 
@@ -2185,7 +2204,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
         function onRendered(htmlContent)
         {
-            const outputFilename    = page.thisBuild.nextOutputFilename;
+            const outputFilename    = page.thisRender.outputFilename;
             const fullPath          = path.normalize(path.join(page.outputRoot, outputFilename));
 
             if (!fullPath.startsWith(self.#dstDir ))
@@ -2227,7 +2246,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
     {
         log(`Page ${page.uriPath} rendering: ${outputFilename}`);
 
-        page.thisBuild.nextOutputFilename = outputFilename;
+        page.thisRender.outputFilename = outputFilename;
 
         //
         // Now that Page.Render() has been called, we can finalise our common CSS
