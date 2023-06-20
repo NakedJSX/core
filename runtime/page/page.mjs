@@ -2,12 +2,15 @@ import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import * as _parser from "@babel/parser";
+import * as _types from "@babel/types";
 import _traverse from "@babel/traverse";
+
 const babel =
     {
         parse:              _parser.parse,
         parseExpression:    _parser.parseExpression,
-        traverse:           _traverse.default
+        traverse:           _traverse.default,
+        types:              _types
     };
 
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
@@ -551,26 +554,34 @@ function processHtmlEventHandler(code)
             hasJsx: false
         }
 
-    const ast = babel.parse(code, { plugins: ['jsx'] });
+    const ast =
+        babel.parse(
+            code,
+            {
+                sourceType: 'script',
+                allowReturnOutsideFunction: true,
+                plugins: ['jsx']
+            });
     babel.traverse(
         ast,
         {
-            // enter(nodePath)
-            // {
-            //     console.log(nodePath.node.type);
-            // },
-
-            JSX(nodePath)
+            Program(nodePath)
             {
-                result.hasJsx = true;
-            },
+                //
+                // Babel has helpfully identified the globals. We need these
+                // so we can prevent whatever they point to from being renamed
+                // or optimised away.
+                //
 
-            Identifier(nodePath)
-            {
-                const binding = nodePath.scope.getBinding(nodePath.node.name);
+                console.log(code);
 
-                if (!binding)
-                    result.unboundIdentifiers.add(nodePath.node.name);
+                for (const [ identifier, node ] of Object.entries(nodePath.scope.globals))
+                {
+                    if (babel.types.isIdentifier(node))
+                        result.unboundIdentifiers.add(identifier);
+                    else if (babel.types.isJSXIdentifier(node))
+                        result.hasJsx = true;
+                }
             }
         });
 
@@ -630,7 +641,7 @@ function createElementImpl(tag, props)
 
                 const identifier = `__nakedjsx_event_handler${Page.UniqueId()}`;
                 Page.AppendJs(`window.${identifier} = function(event) { ${value} }`);
-                element.setAttribute(name, `${identifier}.call(this, event)`);
+                element.setAttribute(name, `${identifier}.call(this,event)`);
             }
             else
             {
