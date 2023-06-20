@@ -1905,7 +1905,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         //
 
         if (this.#developmentMode)
-            await fs.writeFile(this.#versionedTmpFilePath(inlineJsFilename), combinedJs);
+            await fsp.writeFile(this.#versionedTmpFilePath(inlineJsFilename), combinedJs);
 
         const inputOptions =
             {
