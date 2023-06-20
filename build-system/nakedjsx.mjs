@@ -1891,18 +1891,26 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         // determine the original source file.
         //
 
-        this.#clientJsOrigin[inlineJsFilename] = page.clientJsFileIn;
+        this.#clientJsOrigin[inlineJsFilename] = page.clientJsFileIn ?? page.htmlJsFileIn;
 
         // Check the cache first. Helps a LOT in template engine mode
         const cacheKey      = inlineJsFilename + '|' + combinedJs;
         const cachedResult  = thisBuild.cache.clientJsRollup.get(cacheKey);
         if (cachedResult)
             return cachedResult;
+        
+        //
+        // Even though we rollup from memory, in dev mode place the combined client js
+        // in the file system for manual debugging investigations
+        //
+
+        if (this.#developmentMode)
+            await fs.writeFile(this.#versionedTmpFilePath(inlineJsFilename), combinedJs);
 
         const inputOptions =
             {
                 input:      inlineJsFilename,
-                treeshake:  false,
+                treeshake:  true,
                 plugins:
                     [
                         {

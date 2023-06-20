@@ -29,7 +29,7 @@ export default function(babel)
     return {
         visitor:
             {
-                Program(nodePath)
+                Program(pageProgramNodePath)
                 {
                     //
                     // We wamt to make sure that any JSX code passed to
@@ -48,7 +48,7 @@ export default function(babel)
                     
                     const memoKeyGenerator = uniqueGenerator('__nakedjsx_memo_', '__');
 
-                    nodePath.traverse(
+                    pageProgramNodePath.traverse(
                         {
                             JSXAttribute(nodePath)
                             {
@@ -268,6 +268,29 @@ export default function(babel)
                                     return t.stringLiteral(generate(t.variableDeclaration('const', [binding.path.node])).code);
                                 else
                                     throw path.buildCodeFrameError(`Identifiers passed to Page.AppendJsx must be initialised with a function`);
+                            }
+
+                            if (binding.path.isImportSpecifier())
+                            {
+                                //
+                                // We need to inject the same (single) import into the client JS
+                                //
+
+                                const importNode        = t.cloneNode(binding.path.parentPath.node)
+                                importNode.specifiers   = [t.cloneNode(binding.path.node)];
+
+                                return t.stringLiteral(generate(importNode).code);
+                            }
+
+                            if (binding.path.isImportDefaultSpecifier())
+                            {
+                                //
+                                // We need to inject the same import into the client JS
+                                //
+
+                                const importNode = t.cloneNode(binding.path.parentPath.node);
+
+                                return t.stringLiteral(generate(importNode).code);
                             }
                         }
                         
