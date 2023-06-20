@@ -573,8 +573,6 @@ function processHtmlEventHandler(code)
                 // or optimised away.
                 //
 
-                console.log(code);
-
                 for (const [ identifier, node ] of Object.entries(nodePath.scope.globals))
                 {
                     if (babel.types.isIdentifier(node))

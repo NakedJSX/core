@@ -344,8 +344,6 @@ export default function(babel)
                                 [cacheKeyNode]
                                 )
                             );
-
-                        // console.log(memoNodePath.toString());
                     }
 
                     function createMemoKeyNode(memoNodePath)
@@ -392,10 +390,6 @@ export default function(babel)
                                         {
                                             enter(nodePath)
                                             {
-                                                // console.log(nodePath.type);
-                                                // if (!t.isTemplateElement(nodePath))
-                                                //     console.log(nodePath.toString());
-
                                                 if (    t.isTemplateLiteral(nodePath)
                                                     ||  t.isTemplateElement(nodePath)
                                                     ||  t.isMemberExpression(nodePath)
