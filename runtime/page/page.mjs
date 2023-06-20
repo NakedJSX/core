@@ -5,8 +5,9 @@ import * as _parser from "@babel/parser";
 import _traverse from "@babel/traverse";
 const babel =
     {
-        parse:      _parser.parse,
-        traverse:   _traverse.default
+        parse:              _parser.parse,
+        parseExpression:    _parser.parseExpression,
+        traverse:           _traverse.default
     };
 
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
@@ -16,7 +17,7 @@ import { LruCache } from '../../build-system/cache.mjs';
 import { loadCss } from '../../build-system/css.mjs';
 
 const interBuildCache           = new Map();
-const unboundIdentifierCache    = new LruCache('unbound identifiers', 1024);
+const htmlEventHandlerCache     = new LruCache('unbound identifiers', 1024);
 const asyncLocalStorage         = new AsyncLocalStorage();
 
 // Generated 2023-06-17 in Chrome using: JSON.stringify(Object.keys(window).filter(key => key.startsWith('on')))
@@ -538,28 +539,42 @@ export function jsx(tag, props)
         return DeferredElement.From(props.context, createElementImpl.bind(null, tag, props));
 }
 
-function findUnboundIdentifiers(code)
+function processHtmlEventHandler(code)
 {
-    const cachedResult = unboundIdentifierCache.get(code);
+    const cachedResult = htmlEventHandlerCache.get(code);
     if (cachedResult)
         return cachedResult;
 
-    const identifiers = new Set();
+    const result =
+        {
+            unboundIdentifiers: new Set(),
+            hasJsx: false
+        }
 
-    const ast = babel.parse(code);
+    const ast = babel.parse(code, { plugins: ['jsx'] });
     babel.traverse(
         ast,
         {
+            // enter(nodePath)
+            // {
+            //     console.log(nodePath.node.type);
+            // },
+
+            JSX(nodePath)
+            {
+                result.hasJsx = true;
+            },
+
             Identifier(nodePath)
             {
                 const binding = nodePath.scope.getBinding(nodePath.node.name);
 
                 if (!binding)
-                    identifiers.add(nodePath.node.name);
+                    result.unboundIdentifiers.add(nodePath.node.name);
             }
         });
 
-    return unboundIdentifierCache.set(code, identifiers);
+    return htmlEventHandlerCache.set(code, result);
 }
 
 function tagImpl(tag, props)
@@ -597,27 +612,53 @@ function createElementImpl(tag, props)
         
         if (validHtmlEventHandlers.has(nameLowercase))
         {
+            const { unboundIdentifiers, hasJsx } = processHtmlEventHandler(value);
+
             //
-            // Each unbound identifier in an event handler must
-            // be a reference to global scope JS (or a bug).
-            //
-            // If it's a reference to something in client JS,
-            // we need to make sure that it's not tree shaken
-            // out of the final bundle (it might be the only
-            // reference).
-            //
-            // This approach prevents compressing of the name.
-            // IDEALLY we'd use the ability of terser to not
-            // remove specified unused identifiers, compress the
-            // name, and then update all event handler source
-            // that references the identifier. A lot of
-            // complexity for a small compression gain though.
+            // TODO: consider deduplicating identical handlers
             //
 
-            for (const identifier of findUnboundIdentifiers(value))
-                Page.AppendJsIfNew(`window.${identifier} = ${identifier};`);
+            if (hasJsx)
+            {
+                //
+                // If the event handler contains JSX, we need to
+                // move the implementation to the client JS
+                // where the JSX will be compiled. This involves
+                // generating a unique function name and ensuring
+                // that it isn't treeshaken away.
+                //
 
-            element.setAttribute(nameLowercase, value);
+                const identifier = `__nakedjsx_event_handler${Page.UniqueId()}`;
+                Page.AppendJs(`window.${identifier} = function(event) { ${value} }`);
+                element.setAttribute(name, `${identifier}.call(this, event)`);
+            }
+            else
+            {
+                //
+                // With no JSX in use, it's smaller to leave the
+                // event handler where it is.
+                //
+                // Each unbound identifier in an event handler must
+                // be a reference to global scope JS (or a bug).
+                //
+                // If it's a reference to something in client JS,
+                // we need to make sure that it's not tree shaken
+                // out of the final bundle (it might be the only
+                // reference).
+                //
+                // This approach prevents compressing of the name.
+                // IDEALLY we'd use the ability of terser to not
+                // remove specified unused identifiers, compress the
+                // name, and then update all event handler source
+                // that references the identifier. A lot of
+                // complexity for a small compression gain though.
+                //
+
+                for (const identifier of unboundIdentifiers)
+                    Page.AppendJsIfNew(`window.${identifier} = ${identifier};`);
+
+                element.setAttribute(nameLowercase, value);
+            }
         }
         else if (name === 'className')
             for (const className of value.split(/[\s]+/))
