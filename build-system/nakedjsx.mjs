@@ -1506,7 +1506,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                         return null;
 
                     return  {
-                                id: asset.id,
+                                // assets may render differently for client / page js (JSX in particular)
+                                id: `${forClientJs ? 'client' : 'page'}Js${asset.id}`,
                                 meta: { asset }
                             };
                 }
