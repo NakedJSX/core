@@ -32,10 +32,11 @@ const nakedJsxSourceDir = path.dirname(fileURLToPath(import.meta.url));
 // But it's slow (~5ms) and doesn't cache internally.
 //
 
+const requireModule = createRequire(import.meta.url);
 const resolveModule =
     ((id) =>
     {
-        const nodeResolveModule = createRequire(import.meta.url).resolve;
+        const nodeResolveModule = requireModule.resolve;
         const cache = new Map();
 
         function resolve(id)
@@ -361,9 +362,50 @@ export class NakedJSX extends EventEmitter
             if (config.importResolveOverrides[pluginPackageNameOrPath])
                 pluginPackageNameOrPath =
                     pathToFileURL(config.importResolveOverrides[pluginPackageNameOrPath]).href;
+            
+            if (!fs.existsSync(pluginPackageNameOrPath))
+            {
+                //
+                // NOTE: Can't just use import() for this due to
+                // yarn PNP being very unhappy about using imports
+                // that aren't declared in dependencies. It needs
+                // unambigious paths to be used in this case.
+                //
+
+                try
+                {
+                    // Try local modules available to the source dir
+                    const projectResolve    = createRequire(pathToFileURL(this.#srcDir)).resolve;
+                    pluginPackageNameOrPath = projectResolve(pluginPackageNameOrPath);
+                }
+                catch (error)
+                {
+                    // Try the global import paths
+                    const { globalPaths } = requireModule('module');
+
+                    for (const globalPath of globalPaths)
+                    {
+                        try
+                        {
+                            const globalResolve     = createRequire(pathToFileURL(globalPath)).resolve;
+                            pluginPackageNameOrPath = globalResolve(pluginPackageNameOrPath);
+                            break;
+                        }
+                        catch (error)
+                        {
+                            //
+                            // Try the next path.
+                            //
+                            // If none work, we'll fall back to an import() of the
+                            // package name, which is how any plugins bundled with
+                            // nakedjsx itself load.
+                            //
+                        }
+                    }
+                }
+            }
 
             const { default: pluginRegistration } = await import(pluginPackageNameOrPath);
-
             pluginRegistration(
                 {
                     logging: { log, warn, err, fatal },
