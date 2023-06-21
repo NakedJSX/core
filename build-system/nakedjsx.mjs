@@ -13,10 +13,11 @@ import { createRequire } from 'node:module';
 import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
-import { babel, getBabelOutputPlugin } from '@rollup/plugin-babel';
+import { babel as babelRollupPlugin, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import inject from '@rollup/plugin-inject';
 import jsBeautifier from 'js-beautify';
 
+import { babel } from './util.mjs';
 import { ScopedCssSet, loadCss } from './css.mjs'
 import { log, warn, err, fatal, jsonClone, absolutePath, enableBenchmark, semicolonify, merge } from './util.mjs';
 import { DevServer } from './dev-server.mjs';
@@ -1040,26 +1041,32 @@ ${feebackChannels}
         await this.#buildHtmlJs(page);
     }
 
+    #getBabelClientJsPlugins()
+    {
+        return  [
+                    //
+                    // Our implementation of the automatic runtime results in larger client JS
+                    // so we keep using the classic implemenation.
+                    //
+
+                    [
+                        resolveModule("@babel/plugin-transform-react-jsx"),
+                        {
+                            runtime:    'classic',
+                            pragma:     '__nakedjsx__createElement',
+                            pragmaFrag: '__nakedjsx__createFragment'
+                        }
+                    ]
+                ];
+    }
+
     #getBabelInputPlugin(forClientJs)
     {
         const plugins = [];
 
         if (forClientJs)
         {
-            plugins.push(
-                [
-                    //
-                    // Our implementation of the automatic runtime results in larger client JS
-                    // so we keep using the classic implemenation.
-                    //
-
-                    resolveModule("@babel/plugin-transform-react-jsx"),
-                    {
-                        runtime:    'classic',
-                        pragma:     '__nakedjsx__createElement',
-                        pragmaFrag: '__nakedjsx__createFragment'
-                    }
-                ]);
+            plugins.push(...this.#getBabelClientJsPlugins());
         }
         else
         {
@@ -1088,7 +1095,7 @@ ${feebackChannels}
         else
             config.skipPreflightCheck = !(this.#developmentMode || inspector.url());
 
-        return babel(config);
+        return babelRollupPlugin(config);
     }
 
     #hashFileContent(content)
@@ -1389,7 +1396,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
         if (!path.isAbsolute(file))
         {
-            const nodeResolvedId = this.#nodeResolve(file, importer);
+            const nodeResolvedId = this.#nodeResolve(file, this.#clientJsOrigin[importer] ?? importer);
 
             if (nodeResolvedId)
                 file = nodeResolvedId;
@@ -1639,7 +1646,18 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     resolveLoadingPromise();
                 }
 
-                const result = await self.#importAsset(meta.asset, resolve);
+                const assetJsSource = await self.#importAsset(meta.asset, resolve);
+
+                //
+                // The plugin may have returned JSX, so we run the result through babel.
+                //
+
+                const result =
+                    await babel.transformAsync(
+                        assetJsSource,
+                        {
+                            plugins: self.#getBabelClientJsPlugins()
+                        });
 
                 //
                 // If the plugin didn't set the cache result explicitly (as an optimisation),
@@ -1647,9 +1665,9 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 //
 
                 if (!cached.resolved)
-                    resolve(result);
+                    resolve(result.code);
                 
-                return result;
+                return result.code;
             }
         };
     }

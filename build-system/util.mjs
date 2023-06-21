@@ -1,6 +1,20 @@
 import path from 'node:path';
 import { LruCache } from './cache.mjs';
 
+import { transformAsync } from "@babel/core";
+import * as _parser from "@babel/parser";
+import * as types from "@babel/types";
+import _traverse from "@babel/traverse";
+
+export const babel =
+    {
+        parse:              _parser.parse,
+        parseExpression:    _parser.parseExpression,
+        traverse:           _traverse.default,
+        types,
+        transformAsync
+    };
+
 let benchmarkEnable = false;
 let benchmarkStart  = null;
 
