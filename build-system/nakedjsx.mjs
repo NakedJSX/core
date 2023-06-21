@@ -1041,7 +1041,7 @@ ${feebackChannels}
         await this.#buildHtmlJs(page);
     }
 
-    #getBabelClientJsPlugins()
+    #getBabelClientJsxPlugin()
     {
         return  [
                     //
@@ -1049,14 +1049,28 @@ ${feebackChannels}
                     // so we keep using the classic implemenation.
                     //
 
-                    [
-                        resolveModule("@babel/plugin-transform-react-jsx"),
-                        {
-                            runtime:    'classic',
-                            pragma:     '__nakedjsx__createElement',
-                            pragmaFrag: '__nakedjsx__createFragment'
-                        }
-                    ]
+                    resolveModule("@babel/plugin-transform-react-jsx"),
+                    {
+                        runtime:    'classic',
+                        pragma:     '__nakedjsx__createElement',
+                        pragmaFrag: '__nakedjsx__createFragment'
+                    }
+                ];
+    }
+
+    #getBabelPageJsxPlugin()
+    {
+        return  [
+                    //
+                    // Our implementation of the automatic runtime results in larger client JS
+                    // so we keep using the classic implemenation.
+                    //
+
+                    resolveModule("@babel/plugin-transform-react-jsx"),
+                    {
+                        runtime:        'automatic',
+                        importSource:   '@nakedjsx/core/page'
+                    }
                 ];
     }
 
@@ -1066,21 +1080,14 @@ ${feebackChannels}
 
         if (forClientJs)
         {
-            plugins.push(...this.#getBabelClientJsPlugins());
+            plugins.push(this.#getBabelClientJsxPlugin());
         }
         else
         {
             // JSX syntax (untransformed) needed by plugin-magical-page-api.mjs
             plugins.push(resolveModule('@babel/plugin-syntax-jsx'));
             plugins.push(path.join(nakedJsxSourceDir, 'babel', 'plugin-magical-page-api.mjs'));
-            plugins.push(
-                [
-                    resolveModule("@babel/plugin-transform-react-jsx"),
-                    {
-                        runtime:        'automatic',
-                        importSource:   '@nakedjsx/core/page'
-                    }
-                ]);
+            plugins.push(this.#getBabelPageJsxPlugin());
         }
 
         const config =
@@ -1652,12 +1659,13 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 // The plugin may have returned JSX, so we run the result through babel.
                 //
 
-                const result =
-                    await babel.transformAsync(
-                        assetJsSource,
-                        {
-                            plugins: self.#getBabelClientJsPlugins()
-                        });
+                const transformPlugins =
+                    [
+                        forClientJs
+                            ? self.#getBabelClientJsxPlugin()
+                            : self.#getBabelPageJsxPlugin()
+                    ];
+                const result = await babel.transformAsync(assetJsSource, { plugins: transformPlugins });
 
                 //
                 // If the plugin didn't set the cache result explicitly (as an optimisation),
