@@ -421,7 +421,7 @@ export class NakedJSX extends EventEmitter
             }
 
             const { default: pluginRegistration } = await import(pluginPackageNameOrPath);
-            pluginRegistration(
+            await pluginRegistration(
                 {
                     logging: { log, warn, err, fatal },
 
