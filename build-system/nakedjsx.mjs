@@ -361,46 +361,60 @@ export class NakedJSX extends EventEmitter
                 fatal(`Cannot register plugin with bad alias ${alias}. An plugin alias can contain lowercase letters, numbers, and dashes. Can't start or end with dash.`);
 
             if (config.importResolveOverrides[pluginPackageNameOrPath])
+            {
                 pluginPackageNameOrPath =
                     pathToFileURL(config.importResolveOverrides[pluginPackageNameOrPath]).href;
-            
-            if (!fs.existsSync(pluginPackageNameOrPath))
+            }
+            else if (!fs.existsSync(pluginPackageNameOrPath))
             {
                 //
-                // NOTE: Can't just use import() for this due to
-                // yarn PNP being very unhappy about using imports
-                // that aren't declared in dependencies. It needs
-                // unambigious paths to be used in this case.
+                // Is it a project file?
                 //
 
-                try
+                const projectFileTestPath = absolutePath(pluginPackageNameOrPath, this.#srcDir);
+                if (fs.existsSync(projectFileTestPath))
                 {
-                    // Try local modules available to the source dir
-                    const projectResolve    = createRequire(pathToFileURL(this.#srcDir)).resolve;
-                    pluginPackageNameOrPath = projectResolve(pluginPackageNameOrPath);
+                    // Yes
+                    pluginPackageNameOrPath = projectFileTestPath;
                 }
-                catch (error)
+                else
                 {
-                    // Try the global import paths
-                    const { globalPaths } = requireModule('module');
+                    //
+                    // NOTE: Can't just use import() for this due to
+                    // yarn PNP being very unhappy about using imports
+                    // that aren't declared in dependencies. It needs
+                    // unambigious paths to be used in this case.
+                    //
 
-                    for (const globalPath of globalPaths)
+                    try
                     {
-                        try
+                        // Try local modules available to the source dir
+                        const projectResolve    = createRequire(pathToFileURL(this.#srcDir)).resolve;
+                        pluginPackageNameOrPath = projectResolve(pluginPackageNameOrPath);
+                    }
+                    catch (error)
+                    {
+                        // Try the global import paths
+                        const { globalPaths } = requireModule('module');
+
+                        for (const globalPath of globalPaths)
                         {
-                            const globalResolve     = createRequire(pathToFileURL(globalPath)).resolve;
-                            pluginPackageNameOrPath = globalResolve(pluginPackageNameOrPath);
-                            break;
-                        }
-                        catch (error)
-                        {
-                            //
-                            // Try the next path.
-                            //
-                            // If none work, we'll fall back to an import() of the
-                            // package name, which is how any plugins bundled with
-                            // nakedjsx itself load.
-                            //
+                            try
+                            {
+                                const globalResolve     = createRequire(pathToFileURL(globalPath)).resolve;
+                                pluginPackageNameOrPath = globalResolve(pluginPackageNameOrPath);
+                                break;
+                            }
+                            catch (error)
+                            {
+                                //
+                                // Try the next path.
+                                //
+                                // If none work, we'll fall back to an import() of the
+                                // package name, which is how any plugins bundled with
+                                // nakedjsx itself load.
+                                //
+                            }
                         }
                     }
                 }
@@ -1110,7 +1124,7 @@ ${feebackChannels}
         return createHash('sha1').update(content).digest('base64url');
     }
 
-    async #hashAndRenameFile(filepath, dstDir)
+    async #hashAndMoveFile(filepath, dstDir)
     {
         const content       = await fsp.readFile(filepath);
         const hash          = this.#hashFileContent(content);
@@ -1118,6 +1132,22 @@ ${feebackChannels}
         const hashFilename  = parsed.name + '.' + hash + parsed.ext;
 
         await fsp.rename(filepath, path.join(dstDir, hashFilename));
+
+        return hashFilename;
+    }
+
+    async #hashAndCopyFile(filepath, dstDir)
+    {
+        //
+        // TODO: This implementation is not suitable for large files
+        //
+
+        const content       = await fsp.readFile(filepath);
+        const hash          = this.#hashFileContent(content);
+        const parsed        = path.parse(filepath);
+        const hashFilename  = parsed.name + '.' + hash + parsed.ext;
+
+        await fsp.writeFile(path.join(dstDir, hashFilename), content);
 
         return hashFilename;
     }
@@ -1297,7 +1327,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             return this.#assetImportPlugins.get(asset.type).importAsset(
                         {
                             // Useful functions
-                            hashAndOutputAsset: async (filename) => this.#hashAndRenameFile(filename, this.#dstAssetDir),
+                            hashAndMoveAsset:   async (filename) => this.#hashAndMoveFile(filename, this.#dstAssetDir),
+                            hashAndCopyAsset:   async (filename) => this.#hashAndCopyFile(filename, this.#dstAssetDir),
                             assetUriPath:       async (filename) => `${assetUriPathPlaceholder}/${filename}`,
                             mkdtemp:            async ()         => fsp.mkdtemp(path.join(this.#tmpDir, 'import-')),
                             resolve

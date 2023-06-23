@@ -125,12 +125,15 @@ const options =
                 async impl(config, { alias, pluginPackageNameOrPath })
                 {
                     let finalPath;
+                    const testPath = absolutePath(pluginPackageNameOrPath);
 
-                    if (fs.existsSync(pluginPackageNameOrPath))
-                        finalPath = configPath(pluginPackageNameOrPath);
+                    if (fs.existsSync(testPath))
+                        finalPath = configPath(testPath);
                     else
+                    {
                         // hopefully a package name like @nakedjsx/plugin-asset-image
                         finalPath = pluginPackageNameOrPath;
+                    }
                     
                     if (config.plugins[alias])
                         fatal(`Plugin alias '${alias}' already used by ${config.plugins[alias]}`);
