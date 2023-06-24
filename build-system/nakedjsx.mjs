@@ -15,7 +15,7 @@ import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel as babelRollupPlugin, getBabelOutputPlugin } from '@rollup/plugin-babel';
 import inject from '@rollup/plugin-inject';
-import jsBeautifier from 'js-beautify';
+import prettier from 'prettier';
 
 import { babel } from './util.mjs';
 import { ScopedCssSet, loadCss } from './css.mjs'
@@ -426,7 +426,7 @@ export class NakedJSX extends EventEmitter
                     logging: { log, warn, err, fatal },
 
                     // Plugins call this to register themselves.
-                    register: this.#registerPlugin.bind(this, alias)
+                    register: this.#registerPlugin.bind(this, pluginPackageNameOrPath, alias)
                 });
         }
 
@@ -439,15 +439,21 @@ export class NakedJSX extends EventEmitter
         log(`Effective config (paths are relative to ${this.#srcDir}):\n${JSON.stringify(redactedConfig, null, 4)}`);
     }
 
-    #registerPlugin(alias, plugin)
+    #registerPlugin(source, alias, plugin)
     {
-        if (plugin.type === 'asset')
+        if (plugin.type === 'asset-import')
         {
-            log(`Registering ${plugin.type} plugin with alias: ${alias}`);
+            this.#assetImportPlugins.set(alias, plugin);
+        }
+        else if (plugin.type === 'asset')
+        {
+            warn(`The 'asset' plugin type is deprecated - please update plugin type of ${source} to 'asset-import'.`);
             this.#assetImportPlugins.set(alias, plugin);
         }
         else
             fatal(`Cannot register plugin of unknown type ${plugin.type}, (alias is ${alias})`);
+
+        log(`Registered ${plugin.type} plugin with alias: ${alias}\n  from ${source}`);
     }
 
     #logFinalThoughts()
@@ -1784,8 +1790,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             //
             // Terser is used to compress the client JS.
             // It pretty much kills step through debugging,
-            // so only enable it when we're not in development
-            // mode and when there's no debugger attached.
+            // so don't enable it if sourcemaps are enabled.
             //
 
             if (!this.#clientJsSourceMaps)
@@ -2324,26 +2329,14 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
 
             if (self.#config.pretty)
                 htmlContent =
-                    jsBeautifier.html_beautify(
+                    prettier.format(
                         htmlContent,
                         {
-                            "indent_size": "4",
-                            "indent_char": " ",
-                            "max_preserve_newlines": "-1",
-                            "preserve_newlines": false,
-                            "keep_array_indentation": false,
-                            "break_chained_methods": true,
-                            "indent_scripts": "normal",
-                            "brace_style": "collapse",
-                            "space_before_conditional": true,
-                            "unescape_strings": false,
-                            "jslint_happy": false,
-                            "end_with_newline": false,
-                            "wrap_line_length": "0",
-                            "indent_inner_html": false,
-                            "comma_first": false,
-                            "e4x": false,
-                            "indent_empty_lines": false
+                            parser:                     'html',
+                            // tabWidth:                   4,
+                            singleQuote:                true,
+                            quoteProps:                 'preserve',
+                            htmlWhitespaceSensitivity:  'ignore'
                         });
             
             writePromises.push(fsp.writeFile(fullPath, htmlContent));
