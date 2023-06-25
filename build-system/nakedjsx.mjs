@@ -2333,8 +2333,10 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                         htmlContent,
                         {
                             parser:                     'html',
-                            // tabWidth:                   4,
+                            tabWidth:                   4,
                             singleQuote:                true,
+                            semi:                       false,
+                            arrowParens:                'avoid',
                             quoteProps:                 'preserve',
                             htmlWhitespaceSensitivity:  'ignore'
                         });
