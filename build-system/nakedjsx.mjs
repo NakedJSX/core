@@ -1542,6 +1542,9 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     if (!asset)
                         return null;
 
+                    // The invoker of this rollup needs to know to watch this asset for this page
+                    this.addWatchFile(asset.file);
+
                     return  {
                                 // assets may render differently for client / page js (JSX in particular)
                                 id: `${forClientJs ? 'client' : 'page'}Js${asset.id}`,
