@@ -2195,8 +2195,9 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             err(error.stack);
 
             // Watch related files for changes
-            for (let watchFile of error.watchFiles)
-                this.#addWatchFile(watchFile, page);
+            if (error.watchFiles)
+                for (let watchFile of error.watchFiles)
+                    this.#addWatchFile(watchFile, page);
 
             await this.#onPageBuildFailure(page);
             return;
