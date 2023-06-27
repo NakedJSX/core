@@ -476,11 +476,15 @@ Roadmap:
 
 - Incorporate feedback
 - Don't allow unbounded cache growth
-- TypeScript in page source
 - Integrated http proxy
 - ImageMagick support in @nakedjsx/plugin-asset-image
 - Ability to configure default options for plugins
 - Tests
+
+Seeking feedback:
+
+- Basic support for TypeScript has been added.
+  VSCode 'problems' experience not ideal.
 
 Under consideration:
 
@@ -772,7 +776,7 @@ ${feebackChannels}
 
     #matchPageJsFile(filename)
     {
-        const pageEntryMatch    = /^(.*)-(page|html|client|config)\.(jsx|mjs|js)$/;
+        const pageEntryMatch    = /^(.*)-(page|html|client|config)\.(jsx|mjs|js|tsx|ts)$/;
         const match             = filename.match(pageEntryMatch);
 
         if (match)
@@ -1112,8 +1116,10 @@ ${feebackChannels}
 
         const config =
             {
+                extensions: ['.jsx', '.mjs', '.js', '.tsx', '.ts'],
                 sourceMaps: forClientJs ? this.#clientJsSourceMaps : this.#pageJsSourceMaps,
                 babelHelpers: 'inline',
+                presets: [resolveModule("@babel/preset-typescript")],
                 plugins
             };
         
