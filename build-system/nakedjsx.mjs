@@ -479,6 +479,7 @@ Roadmap:
 - Integrated http proxy
 - ImageMagick support in @nakedjsx/plugin-asset-image
 - Ability to configure default options for plugins
+- Ability to associate plugins with file extensions
 - Tests
 
 Seeking feedback:
@@ -1403,16 +1404,27 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         
         //
         // If the file path is not absolute by this stage,
+        // attempt relative and then node resolution.
         //
 
         if (!path.isAbsolute(file))
         {
-            const nodeResolvedId = this.#nodeResolve(file, this.#clientJsOrigin[importer] ?? importer);
-
-            if (nodeResolvedId)
-                file = nodeResolvedId;
-            else if (importer)
-                file = absolutePath(file, path.dirname(importer));                
+            const resolvedRelativePath = this.#resolveRelativePath(importer, file);
+            if (resolvedRelativePath)
+            {
+                file = resolvedRelativePath;
+            }
+            else
+            {
+                const nodeResolvedId = this.#nodeResolve(file, this.#clientJsOrigin[importer] ?? importer);
+                if (nodeResolvedId)
+                    file = nodeResolvedId;
+                else
+                {
+                    err(`Could not resolve id ${id} from ${importer}`);
+                    return null;
+                }
+            }
         }
         
         //
@@ -1425,6 +1437,20 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             id = `:${type}:${file}`;
         
         return { id, type, file, optionsString };
+    }
+
+    #resolveRelativePath(importer, id)
+    {
+        // Relative path to a source file?
+        const importRelativeOrigin = importer.replace(/^(pageJs|clientJs):dynamic:/, '')
+        const resolvedRelativePath =
+            path.join(
+                path.dirname(this.#clientJsOrigin[importRelativeOrigin] ?? importRelativeOrigin),
+                id);
+        if (fs.existsSync(resolvedRelativePath))
+            return resolvedRelativePath;
+        
+        return undefined;
     }
 
     #getImportPlugin(forClientJs)
@@ -1542,8 +1568,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             };
 
                 // Relative path to a source file?
-                const resolvedRelativePath = path.join(path.dirname(self.#clientJsOrigin[importer] ?? importer), id);
-                if (fs.existsSync(resolvedRelativePath))
+                const resolvedRelativePath = self.#resolveRelativePath(importer, id);
+                if (resolvedRelativePath)
                     return  {
                                 id: resolvedRelativePath,
                                 external: false
