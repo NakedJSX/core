@@ -1246,78 +1246,39 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
     async #importAssetDynamic(asset, resolve)
     {
         //
-        // The asset js file is expected to export a function:
+        // :dynamic: assets imports create source code at *compile time*
+        // which is then imported like any other source code import.
         //
-        //     export default async function({ addJsx }) { ... }
+        // The asset js file is expected to export a default async function:
         //
-        // where addJsx is a callback:
+        //     export default async function(context) { ... }
         //
-        //     addJsx(meta, jsx)
+        // which is passed a context object containing:
         //
-        // The JS exported function is expected to call addJsx(...)
-        // for each dynamically fetched JSX snippet.
-        //
-        // meta is an arbitrary object to pass through to HTML rendering code
-        // jsx is a string containing uncompiled JSX
-        //
-        // The result will be an array of [meta, FunctionGeneratedFromJsx]
-        // such that HTML rendering code can use FunctionGeneratedFromJsx 
-        // as a JSX function.
-        //
-        // e.g.
-        //
-        // all.mjs:
-        //
-        //     import fsp from 'node:fs/promises'
-        //    
-        //     export default async ({ addJsx }) =>
-        //     {
-        //         for (const file of await fsp.readdir('.'))
-        //         {
-        //             if (!file.endsWith('.jsx'))
-        //                 continue;
-        //    
-        //             addJsx({ file }, await fsp.readFile(file, { encoding: 'utf-8' }));
-        //         }
-        //     }
-        //
-        // index-html.mjs:
-        //
-        //     import posts from ':dynamic:posts/all.mjs'
-        //
-        //     global.SomeTag = ...
-        //
-        //     //
-        //     // <SomeTag /> will be available for use inside <Post />,
-        //     // the content of which came from an abitrary data source
-        //     // with no need for import SomeTag from <somewhere> !
-        //     //
-        //    
-        //     for (const [meta, Post] of posts)
-        //     {
-        //         Page.Create('en');
-        //         Page.AppendBody(<Post />);
-        //         Page.Render(meta.file.replace(/\.jsx$/, '.html'));
-        //     }
+        //     file          - absolute path to the file being executed
+        //     optionsString - ?key=value&... when import used like
+        //                     import something from ':dynamic:<file.mjs>?key=value&...'
         //
 
-        // Change into the dir the file is in for convenience
+        // Temporarily change into the dir the file is in
         const cwdBackup = process.cwd();
         process.chdir(path.dirname(asset.file));
 
         try
         {
-            let result = '';
+            const context =
+                {
+                    file:           asset.file,
+                    optionsString:  asset.optionsString
+                };
 
-            function addJsx(meta, jsx)
-            {
-                result += `[${JSON.stringify(meta)},()=>${jsx}],\n`;
-            }
+            //
+            // Import the default export from the dynamic js builder and execute it
+            // to obtain the dynamically created source code.
+            //
 
-            const fetchDynamicJsx = (await import(pathToFileURL(asset.file).href)).default;
-            await fetchDynamicJsx({ addJsx });
-
-            return `export default [${result}]`;
+            const buildDynamicJs = (await import(pathToFileURL(asset.file).href)).default;
+            return await buildDynamicJs(context);
         }
         finally
         {
