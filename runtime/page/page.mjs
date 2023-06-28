@@ -1,21 +1,9 @@
 import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
-import * as _parser from "@babel/parser";
-import * as _types from "@babel/types";
-import _traverse from "@babel/traverse";
-
-const babel =
-    {
-        parse:              _parser.parse,
-        parseExpression:    _parser.parseExpression,
-        traverse:           _traverse.default,
-        types:              _types
-    };
-
 import { getCurrentJob } from '../../build-system/nakedjsx.mjs';
 import { ServerDocument, CachingHtmlRenderer, Element } from './document.mjs';
-import { convertToAlphaNum, log, semicolonify } from '../../build-system/util.mjs';
+import { convertToAlphaNum, log, semicolonify, babel } from '../../build-system/util.mjs';
 import { LruCache } from '../../build-system/cache.mjs';
 import { loadCss } from '../../build-system/css.mjs';
 
