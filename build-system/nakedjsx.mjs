@@ -441,13 +441,8 @@ export class NakedJSX extends EventEmitter
 
     #registerPlugin(source, alias, plugin)
     {
-        if (plugin.type === 'asset-import')
+        if (plugin.type === 'asset' || plugin.type === 'asset-import')
         {
-            this.#assetImportPlugins.set(alias, plugin);
-        }
-        else if (plugin.type === 'asset')
-        {
-            warn(`The 'asset' plugin type is deprecated - please update plugin type of ${source} to 'asset-import'.`);
             this.#assetImportPlugins.set(alias, plugin);
         }
         else
