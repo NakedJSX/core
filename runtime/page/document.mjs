@@ -305,11 +305,10 @@ export class ServerDocument
 function requireValidAttributeName(attributeName)
 {
     /*
-     * The HTML5 spec is much more permissive but lets
-     * just support the basics.
+     * Basic validation for valid attribute names, not comprehensive
+     * See https://stackoverflow.com/a/926136
      */
-
-    if (/[^a-zA-Z0-9-]/.test(attributeName))
+    if (/[\t\n\f \/>"'=]/.test(attributeName))
         throw Error("Invalid attribute name: " + attributeName);
 }
 
