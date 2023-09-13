@@ -443,12 +443,15 @@ export class NakedJSX extends EventEmitter
     {
         if (plugin.type === 'asset' || plugin.type === 'asset-import')
         {
+            if (!(plugin.importAsset instanceof Function))
+                fatal(`Asset plugin ${alias} does not provide 'importAsset()'`);
+
             this.#assetImportPlugins.set(alias, plugin);
         }
         else
-            fatal(`Cannot register plugin of unknown type ${plugin.type}, (alias is ${alias})`);
+            fatal(`Cannot register plugin ${alias} of unknown type ${plugin.type}`);
 
-        log(`Registered ${plugin.type} plugin with alias: ${alias}\n  from ${source}`);
+        log(`Registered ${plugin.type} plugin ${alias} from ${source}`);
     }
 
     #logFinalThoughts()
