@@ -302,13 +302,33 @@ export class ServerDocument
     }
 }
 
+function isValidAttributeName(attributeName)
+{
+    //
+    // HTML5 attribute names must consist of one or more characters other than controls,
+    // U+0020 SPACE, U+0022 ("), U+0027 ('), U+003E (>), U+002F (/), U+003D (=), and noncharacters.
+    //
+    // https://html.spec.whatwg.org/multipage/syntax.html#attributes-2
+    //
+
+    // 'controls'
+    if (/[\u0000-\u001F\u007F-\u009F]/.test(attributeName))
+        return false;
+    
+    // Specific printable ASCII characters
+    if (/[ "'>\/=]/.test(attributeName))
+        return false;
+
+    // 'noncharacters'
+    if (/[\uFDD0-\uFDEF\uFFFE\uFFFF\u{1FFFE}\u{1FFFF}\u{2FFFE}\u{2FFFF}\u{3FFFE}\u{3FFFF}\u{4FFFE}\u{4FFFF}\u{5FFFE}\u{5FFFF}\u{6FFFE}\u{6FFFF}\u{7FFFE}\u{7FFFF}\u{8FFFE}\u{8FFFF}\u{9FFFE}\u{9FFFF}\u{AFFFE}\u{AFFFF}\u{BFFFE}\u{BFFFF}\u{CFFFE}\u{CFFFF}\u{DFFFE}\u{DFFFF}\u{EFFFE}\u{EFFFF}\u{FFFFE}\u{FFFFF}\u{10FFFE}\u{10FFFF}]/u.test(attributeName))
+        return false;
+
+    return true;
+}
+
 function requireValidAttributeName(attributeName)
 {
-    /*
-     * Basic validation for valid attribute names, not comprehensive
-     * See https://stackoverflow.com/a/926136
-     */
-    if (/[\t\n\f \/>"'=]/.test(attributeName))
+    if (!isValidAttributeName(attributeName))
         throw Error("Invalid attribute name: " + attributeName);
 }
 
