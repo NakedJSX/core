@@ -2311,12 +2311,23 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         {
             const outputFilename    = page.thisRender.outputFilename;
             const fullPath          = path.normalize(path.join(page.outputRoot, outputFilename));
+            const fullOutputDir     = path.dirname(fullPath);
 
             if (!fullPath.startsWith(self.#dstDir ))
             {
                 err(`Page ${page.uriPath} attempted to render: ${fullPath}, which is outside of ${self.#dstDir}`);
                 failed = true;
                 return;
+            }
+
+            if (!fs.existsSync(fullOutputDir))
+            {
+                //
+                // This page has overriden the output path to include a new folder.
+                //
+
+                const mkdirOptions = { recursive: true };
+                fs.mkdirSync(fullOutputDir, mkdirOptions);
             }
 
             if (self.#config.pretty)
