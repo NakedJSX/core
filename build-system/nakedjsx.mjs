@@ -2483,5 +2483,5 @@ NakedJSX.Events =
         page_new:       'page_new',
 
         /** A page is no longer available */
-        page_delete:    'page_new',
+        page_delete:    'page_delete',
     };
