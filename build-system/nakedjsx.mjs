@@ -2344,7 +2344,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             semi:                       false,
                             arrowParens:                'avoid',
                             quoteProps:                 'preserve',
-                            htmlWhitespaceSensitivity:  'ignore'
+                            htmlWhitespaceSensitivity:  'strict'
                         });
             
             writePromises.push(fsp.writeFile(fullPath, htmlContent));
