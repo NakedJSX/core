@@ -150,7 +150,11 @@ export class Element
             if (this.tagName === 'raw-content')
                 return this.attributes.get('content');
 
-            html = '<' + this.tagName;
+            // Temporary workaround for https://github.com/prettier/prettier/issues/16184
+            if (this.tagName === 'pre')
+                html = '\n<' + this.tagName;
+            else
+                html = '<' + this.tagName;
 
             // Attributes
             for (const [key, value] of this.attributes.entries())
