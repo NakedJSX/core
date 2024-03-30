@@ -545,6 +545,11 @@ ${feebackChannels}
                     {
                         switch (char.toLowerCase())
                         {
+                            // CTRL-C is represented by the byte sequence 0x03 in ASCII
+                            case '\u0003':
+                                process.exit();
+                                break;
+                            
                             case 'x':
                                 this.exit();
                                 break;
