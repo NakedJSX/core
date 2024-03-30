@@ -2339,20 +2339,26 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
             }
 
             if (self.#config.pretty)
-                htmlContent =
-                    prettier.format(
-                        htmlContent,
-                        {
-                            parser:                     'html',
-                            tabWidth:                   4,
-                            singleQuote:                true,
-                            semi:                       false,
-                            arrowParens:                'avoid',
-                            quoteProps:                 'preserve',
-                            htmlWhitespaceSensitivity:  'strict'
-                        });
-            
-            writePromises.push(fsp.writeFile(fullPath, htmlContent));
+            {
+                writePromises.push(
+                    prettier
+                        .format(
+                            htmlContent,
+                            {
+                                parser:                     'html',
+                                tabWidth:                   4,
+                                singleQuote:                true,
+                                semi:                       false,
+                                arrowParens:                'avoid',
+                                quoteProps:                 'preserve',
+                                // See: https://prettier.io/blog/2018/11/07/1.15.0#whitespace-sensitive-formatting
+                                htmlWhitespaceSensitivity:  self.#config.pretty === 'ish' ? 'strict' : 'css'
+                            })
+                        .then(formattedHtmlContent => fsp.writeFile(fullPath, formattedHtmlContent))
+                    );
+            }
+            else
+                writePromises.push(fsp.writeFile(fullPath, htmlContent));
         }
     }
 

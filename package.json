@@ -30,7 +30,7 @@
     "csso": "^5.0.5",
     "postcss": "^8.4.21",
     "postcss-nested": "^6.0.0",
-    "prettier": "2.8.8",
+    "prettier": "3.2.5",
     "rollup": "^3.10.1",
     "terser": "^5.16.1"
   },

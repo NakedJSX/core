@@ -193,10 +193,19 @@ const options =
 
         '--pretty':
             {
-                desc: 'Format output HTML, CSS, and JavaScript.',
+                desc: 'Format output HTML, CSS, and JavaScript. Warning: Looks better, but assumes whitespace around some HTML tags is not significant. Use --pretty-ish if that is a problem.',
                 impl(config)
                 {
                     config.pretty = true;
+                }
+            },
+
+        '--pretty-ish':
+            {
+                desc: 'Format output HTML, CSS, and JavaScript, preserving whitespace around all HTML tags.',
+                impl(config)
+                {
+                    config.pretty = 'ish';
                 }
             },
 
