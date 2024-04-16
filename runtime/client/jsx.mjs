@@ -51,6 +51,20 @@ export function __nakedjsx__createElement(tag, props, ...children)
                 continue;
             }
         }
+
+        //
+        // Boolean attribute values are converted to the presence of an 
+        // attribute with no assigned value.
+        //
+
+        if (value === false)
+            continue;
+
+        if (value === true)
+        {
+            element.setAttribute(name, '');
+            continue;
+        }
         
         element.setAttribute(name, value);
     };
