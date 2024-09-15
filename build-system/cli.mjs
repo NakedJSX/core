@@ -135,7 +135,7 @@ const options =
                         finalPath = pluginPackageNameOrPath;
                     }
                     
-                    if (config.plugins[alias])
+                    if (config.plugins[alias] && config.plugins[alias] !== finalPath)
                         fatal(`Plugin alias '${alias}' already used by ${config.plugins[alias]}`);
 
                     config.plugins[alias] = finalPath;
