@@ -461,18 +461,10 @@ export class NakedJSX extends EventEmitter
             'Discord: https://discord.gg/BXQDtub2fS';
 
         log.setPrompt(
-`Thank you for trying NakedJSX prerelease version ${packageInfo.version}!
-
-NOTE: Things subject to change until version 1.0.0,
-      breaking changes linked to Y increments in 0.Y.Z.
-
-      After 1.0.0, breaking changes will be linked to
-      X increments in X.Y.Z and of course all effort
-      will be made to avoid them.
+`Thank you for trying NakedJSX version ${packageInfo.version}!
 
 Roadmap:
 
-- Incorporate feedback
 - Don't allow unbounded cache growth
 - Integrated http proxy
 - ImageMagick support in @nakedjsx/plugin-asset-image
@@ -487,13 +479,15 @@ Seeking feedback:
 
 Under consideration:
 
-- Client JSX ref support
 - Client JSX context support
-- Support Deno / dpx
 
 All feedback is appreciated:
 
 ${feebackChannels}
+
+You should be able to repeat this build result indefinitely by
+building with --config-save to save all build options, and then
+using 'npx nakedjsx@${packageInfo.version} <pages dir>' under Node ${process.version}.
 `
             );
     }
@@ -1773,7 +1767,8 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 inject(
                     {
                         '__nakedjsx__createElement':  ['@nakedjsx/core/client', '__nakedjsx__createElement'],
-                        '__nakedjsx__createFragment': ['@nakedjsx/core/client', '__nakedjsx__createFragment']
+                        '__nakedjsx__createFragment': ['@nakedjsx/core/client', '__nakedjsx__createFragment'],
+                        'nakedjsx': ['@nakedjsx/core/client', 'nakedjsx']
                     })
                 );
         

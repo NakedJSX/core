@@ -52,6 +52,12 @@ export function __nakedjsx__createElement(tag, props, ...children)
             }
         }
 
+        if (name == 'ref')
+        {
+            value.current = element;
+            continue;
+        }
+
         //
         // Boolean attribute values are converted to the presence of an 
         // attribute with no assigned value.
@@ -79,3 +85,18 @@ export function __nakedjsx__createFragment(props)
 {
     return props.children;
 }
+
+function createRef()
+{
+    //
+    // A Ref is a container that recieves a reference to
+    // a created HTML element.
+    //
+
+    return {};
+}
+
+export const nakedjsx =
+    {
+        createRef
+    };
