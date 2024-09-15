@@ -481,7 +481,16 @@ Under consideration:
 
 - Client JSX context support
 
-All feedback is appreciated:
+Recent Changes:
+
+- Client JS Ref support:
+
+    Use nakedjsx.createRef() to create a Ref,
+    and then set it via a ref={created_ref} prop.
+    Afterwards, created_ref.current points to the
+    newly created element.
+
+Feedback is appreciated:
 
 ${feebackChannels}
 
