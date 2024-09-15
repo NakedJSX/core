@@ -174,7 +174,7 @@ const options =
 
         '--sourcemaps-enable':
             {
-                desc: 'Create sourcemaps (which are normally disabled untless dev mode or when debugger attached)',
+                desc: 'Create sourcemaps (which are normally disabled unless dev mode or when debugger attached)',
                 impl(config)
                 {                    
                     config.output.pageJs.sourcemaps     = 'enable';
