@@ -10,7 +10,8 @@
     ".": "./build-system/nakedjsx.mjs",
     "./cli-bin": "./build-system/cli-bin.mjs",
     "./client": "./runtime/client/jsx.mjs",
-    "./page": "./runtime/page/page.mjs"
+    "./page": "./runtime/page/page.mjs",
+    "./page/jsx-runtime": "./runtime/page/page.mjs"
   },
   "dependencies": {
     "@babel/core": "^7.20.12",
