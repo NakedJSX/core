@@ -14,6 +14,7 @@ import chokidar from 'chokidar';
 import { minify } from 'terser';
 import { rollup } from 'rollup';
 import { babel as babelRollupPlugin, getBabelOutputPlugin } from '@rollup/plugin-babel';
+import commonjs from '@rollup/plugin-commonjs';
 import inject from '@rollup/plugin-inject';
 import prettier from 'prettier';
 
@@ -465,7 +466,6 @@ export class NakedJSX extends EventEmitter
 
 Roadmap:
 
-- Don't allow unbounded cache growth
 - Integrated http proxy
 - ImageMagick support in @nakedjsx/plugin-asset-image
 - Ability to configure default options for plugins
@@ -1768,10 +1768,14 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                 this.#getBabelInputPlugin(forClientJs),
 
                 // Our import plugin deals with our custom import behaviour (SRC, LIB, ASSET, ?raw, etc) as well as JS module imports
-                this.#getImportPlugin(forClientJs)
+                this.#getImportPlugin(forClientJs),
+
+                // Allow rollup to deal with deps in commonjs format
+                commonjs()
             ];
 
         if (forClientJs)
+        {
             plugins.push(
                 inject(
                     {
@@ -1780,6 +1784,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                         'nakedjsx': ['@nakedjsx/core/client', 'nakedjsx']
                     })
                 );
+        }
         
         return plugins;
     }
