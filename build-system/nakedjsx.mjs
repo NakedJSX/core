@@ -481,7 +481,9 @@ Under consideration:
 
 - Client JSX context support
 
-Recent Changes:
+Recent changes:
+
+- Dependencies in CommonJS format are now supported
 
 - Client JS Ref support:
 
