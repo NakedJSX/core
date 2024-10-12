@@ -483,7 +483,9 @@ Under consideration:
 
 Recent changes:
 
-- Dependencies in CommonJS format are now supported
+- Imported resources can now be used in client JS.
+
+- Dependencies in CommonJS format are now supported.
 
 - Client JS Ref support:
 
