@@ -278,6 +278,25 @@ export const Page =
             await onRenderStart(page, outputFilename);
 
             //
+            // Now that we can know the output path, we can calculate a relative path
+            // back to the site root. Any imported assets used by pages or client JS
+            // need to be resolved relative to this path.
+            //
+
+            const fullOutputPath =
+                path.normalize(
+                    path.join(
+                        page.outputRoot,
+                        outputFilename
+                        )
+                    );
+
+            const relativeAssetRoot =
+                path.relative(
+                    path.dirname(fullOutputPath),
+                    page.outputAssetRoot);
+
+            //
             // We have our page structure, it's now time to process CSS attributes
             //
 
@@ -346,30 +365,20 @@ export const Page =
                     );
             }
 
-            //
-            // Now that we can know the output path, we can calculate a relative path
-            // back to the site root.
-            //
-
-            const fullOutputPath =
-                path.normalize(
-                    path.join(
-                        page.outputRoot,
-                        outputFilename
-                        )
-                    );
-
-            const relativeAssetRoot =
-                path.relative(
-                    path.dirname(fullOutputPath),
-                    page.outputAssetRoot);
+            // Make the page relative asset root available to client JS
+            this.AppendHead(
+                jsx(
+                    'raw-content',
+                    {
+                        content: '<script>const relativeAssetRoot="' + relativeAssetRoot + '";</script>'
+                    })
+                );
 
             //
             // Render the document to HTML and pass result back
             //
 
             onRendered(document.toHtml({ relativeAssetRoot }));
-            // onRendered('<html></html>');
 
             setDocument(null);
         },

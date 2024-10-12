@@ -1,3 +1,6 @@
+const assetUriPathPlaceholder   = /^__NAKEDJSX_ASSET_DIR__/;
+const assetAttributeNames       = new Set(['data', 'srcset', 'src', 'href']);
+
 //
 // Wrap Element.appendChild() so that it can add an array of elements,
 // which allows a JSX fragment to be passed to appendChild.
@@ -72,6 +75,22 @@ export function __nakedjsx__createElement(tag, props, ...children)
             continue;
         }
         
+        //
+        // Imported assets need to be resolved to their final path
+        //
+
+        if (typeof value === 'string')
+            if (assetUriPathPlaceholder.test(value))
+                if (assetAttributeNames.has(name))
+                {
+                    element.setAttribute(name, value.replace(assetUriPathPlaceholder, relativeAssetRoot));
+                    continue;
+                }
+
+        //
+        // Default attribute assignment
+        //
+
         element.setAttribute(name, value);
     };
     
