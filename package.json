@@ -1,6 +1,6 @@
 {
   "name": "@nakedjsx/core",
-  "version": "0.15.1-test.0",
+  "version": "0.15.1-test.1",
   "description": "Build static HTML files from JSX and scoped CSS.",
   "type": "module",
   "bin": {
