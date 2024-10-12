@@ -1175,7 +1175,7 @@ using 'npx nakedjsx@${packageInfo.version} <pages dir>' under Node ${process.ver
         return hashFilename;
     }
 
-    async #importAssetDefault(asset, resolve)
+    async #importAssetDefault(asset, forClientJs, resolve)
     {
         //
         // A straight copy of the asset with a hash embedded in the filename.
@@ -1203,7 +1203,7 @@ using 'npx nakedjsx@${packageInfo.version} <pages dir>' under Node ${process.ver
         return result;
     }
 
-    async #importAssetRaw(asset, resolve)
+    async #importAssetRaw(asset, forClientJs, resolve)
     {
         //
         // Make the raw asset content available to source code, as a string or a Buffer.
@@ -1218,30 +1218,39 @@ using 'npx nakedjsx@${packageInfo.version} <pages dir>' under Node ${process.ver
                 ...querystring.decode(asset.optionsString)
             };
 
-        if (options.as === 'Buffer')
+        if (forClientJs)
         {
-            // return code that creates the buffer from the file on demand
-            const result =
-`import fsp from 'node:fs/promises';
-export default Buffer.from(await fsp.readFile(${JSON.stringify(asset.file)}));`;
-        
-            return result;
-        }
+            //
+            // We need to fully evaluate and embed the asset content at build time.
+            //
 
-        if (options.as === 'utf-8')
+            const content = await fsp.readFile(asset.file);
+
+            if (options.as === 'Buffer')
+                return `export default Buffer.from(${JSON.stringify(content.toString('base64'))}", 'base64');`;
+            
+            if (options.as === 'utf-8')
+                return `export default ${JSON.stringify(content.toString())};`;
+        }
+        else
         {
-            // return code that loads the file into a string on demand
-            const result =
-`import fsp from 'node:fs/promises';
-export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
-        
-            return result;
+            //
+            // Return code that loads the file content as the page is generated.
+            //
+
+            if (options.as === 'Buffer')
+                return `import fsp from 'node:fs/promises';
+                        export default Buffer.from(await fsp.readFile(${JSON.stringify(asset.file)}));`;
+    
+            if (options.as === 'utf-8')
+                return `import fsp from 'node:fs/promises';
+                        export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         }
         
-        throw Error(`Bad 'as' for raw import: ${options.id}`);
+        throw Error(`Bad 'as' for raw import: ${options.id} (clientJs: ${forClientJs})`);
     }
 
-    async #importAssetJson(asset, resolve)
+    async #importAssetJson(asset, forClientJs, resolve)
     {
         //
         // Running the JSON via parse -> stringify is technically
@@ -1254,7 +1263,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         return result;
     }
 
-    async #importAssetDynamic(asset, resolve)
+    async #importAssetDynamic(asset, forClientJs, resolve)
     {
         //
         // :dynamic: assets imports create source code at *compile time*
@@ -1298,10 +1307,10 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         }
     }
 
-    async #importAsset(asset, resolve)
+    async #importAsset(asset, forClientJs, resolve)
     {
         if (asset.type === 'default')
-            return this.#importAssetDefault(asset, resolve);
+            return this.#importAssetDefault(asset, forClientJs, resolve);
         
         //
         // Check plugins first, this allows built-in plugins (raw, json) to be overridden
@@ -1317,16 +1326,17 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                             mkdtemp:            async ()         => fsp.mkdtemp(path.join(this.#tmpDir, 'import-')),
                             resolve
                         },
-                        asset);
+                        asset,
+                        forClientJs);
 
         if (asset.type === 'raw')
-            return this.#importAssetRaw(asset, resolve);
+            return this.#importAssetRaw(asset, forClientJs, resolve);
         
         if (asset.type === 'json')
-            return this.#importAssetJson(asset, resolve);
+            return this.#importAssetJson(asset, forClientJs, resolve);
         
         if (asset.type === 'dynamic')
-            return this.#importAssetDynamic(asset, resolve);
+            return this.#importAssetDynamic(asset, forClientJs, resolve);
 
         throw new Error(`Unknown import type '${asset.type}' for import ${asset.id}. Did you forget to enable a plugin?`);
     }
@@ -1697,7 +1707,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
                     resolveLoadingPromise();
                 }
 
-                const assetJsSource = await self.#importAsset(meta.asset, resolve);
+                const assetJsSource = await self.#importAsset(meta.asset, forClientJs, resolve);
 
                 //
                 // The plugin may have returned JSX, so we run the result through babel.
@@ -2093,7 +2103,7 @@ export default (await fsp.readFile(${JSON.stringify(asset.file)})).toString();`;
         const outputOptions =
             {
                 entryFileNames: `${page.htmlFile}.[hash:64].js`,
-                format: 'cjs',
+                format: 'esm',
                 sourcemap: this.#clientJsSourceMaps ? 'inline' : false,
                 plugins:
                     [

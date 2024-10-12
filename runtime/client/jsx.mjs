@@ -37,6 +37,17 @@ export function __nakedjsx__createElement(tag, props, ...children)
     }
 
     //
+    // Support the <raw-content> tag for injecting raw HTML
+    //
+
+    if (tag === 'raw-content')
+    {
+        const dummy     = document.createElement('div');
+        dummy.innerHTML = props.content;
+        return [...dummy.children];
+    }
+
+    //
     // We're dealing with regular HTML, not a JSX function
     //
 
@@ -79,9 +90,9 @@ export function __nakedjsx__createElement(tag, props, ...children)
         // Imported assets need to be resolved to their final path
         //
 
-        if (typeof value === 'string')
-            if (assetUriPathPlaceholder.test(value))
-                if (assetAttributeNames.has(name))
+        if (assetAttributeNames.has(name))
+            if (typeof value === 'string')
+                if (assetUriPathPlaceholder.test(value))
                 {
                     element.setAttribute(name, value.replace(assetUriPathPlaceholder, relativeAssetRoot));
                     continue;
