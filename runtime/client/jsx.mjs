@@ -66,23 +66,34 @@ export function __nakedjsx__createElement(tag, props, ...children)
             }
         }
 
-        if (name == 'ref')
-        {
-            value.current = element;
-            continue;
-        }
-
         //
-        // Boolean attribute values are converted to the presence of an 
-        // attribute with no assigned value.
+        // Skip attributes with a valud of false, null, or undefined.
         //
 
-        if (value === false)
+        if (value === false || value === null || value === undefined)
             continue;
+
+        //
+        // Boolean 'true' attribute values are converted to the presence of
+        // an attribute with no assigned value.
+        //
 
         if (value === true)
         {
             element.setAttribute(name, '');
+            continue;
+        }
+
+        //
+        // Support capturing a reference to the created element.
+        //
+
+        if (name == 'ref')
+        {
+            if (typeof value === 'object')
+                value.current = element;
+            else
+                console.error('ref must be an object');
             continue;
         }
         
