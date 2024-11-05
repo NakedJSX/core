@@ -11,17 +11,19 @@ const originalAppendChild = Element.prototype.appendChild;
 Element.prototype.appendChild =
     function(child)
     {
-        if (Array.isArray(child))
+        if (child instanceof Node)
+            return originalAppendChild.call(this, child);
+        else if (Array.isArray(child))
         {
             for (const childArrayMember of child)
                 this.appendChild(childArrayMember);
         
             return child;
         }
-        else if (typeof child === 'string')
-            return originalAppendChild.call(this, document.createTextNode(child));
-        else if (child)
-            return originalAppendChild.call(this, child);
+        else if (child === null || child === undefined)
+            return null;
+        else
+            return originalAppendChild.call(this, document.createTextNode(child.toString()));
     };
 
 export function __nakedjsx__createElement(tag, props, ...children)
