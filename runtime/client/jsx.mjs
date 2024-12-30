@@ -107,7 +107,7 @@ export function __nakedjsx__createElement(tag, props, ...children)
             if (typeof value === 'string')
                 if (assetUriPathPlaceholder.test(value))
                 {
-                    element.setAttribute(name, value.replace(assetUriPathPlaceholder, relativeAssetRoot));
+                    element.setAttribute(name, nakedjsx.assetPath(value));
                     continue;
                 }
 
@@ -139,7 +139,13 @@ function createRef()
     return {};
 }
 
+function assetPath(assetPath)
+{
+    return assetPath.replace(assetUriPathPlaceholder, relativeAssetRoot);
+}
+
 export const nakedjsx =
     {
-        createRef
+        createRef,
+        assetPath
     };
