@@ -384,6 +384,15 @@ export async function main()
     }
 
     //
+    // As a NakedJSX build gets older, which is expected when using repeatable builds,
+    // browserslist will start to get out of date and will start to warn about it.
+    //
+    // This prevents that warning from appearing.
+    // 
+
+    process.env.BROWSERSLIST_IGNORE_OLD_DATA = 'true';
+
+    //
     // If the config is dirty, pass it directly to @nakedjsx/core.
     // Otherwise we let it read the config file from root dir.
     //
