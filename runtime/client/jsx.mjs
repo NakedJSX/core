@@ -50,10 +50,16 @@ export function __nakedjsx__createElement(tag, props, ...children)
     }
 
     //
-    // We're dealing with regular HTML, not a JSX function
+    // We're dealing with a regular HTML-like tag, not a JSX function.
+    //
+    // SVG and mathml elements need to be created with a namespace.
     //
 
-    const element = document.createElement(tag);
+    let element;
+    if (props.xmlns)
+        element = document.createElementNS(props.xmlns, tag);
+    else
+        element = document.createElement(tag);
 
     for (const [name, value] of Object.entries(props))
     {
@@ -118,8 +124,31 @@ export function __nakedjsx__createElement(tag, props, ...children)
         element.setAttribute(name, value);
     };
     
-    for (const child of children)
-        element.appendChild(child);
+    if (props.xmlns)
+    {
+        //
+        // HACK - we need to recreate all the children with the same namespace
+        //        as the parent element. Otherwise, SVG and MathML elements
+        //        will not render correctly.
+        //
+        //        It would be better to handle this as a babel plugin.
+        //
+
+        let innerHTML = '';
+        for (const child of children)
+        {
+            if (child instanceof Node)
+                innerHTML += child.outerHTML;
+            else
+                innerHTML += child;
+        }
+        element.innerHTML = innerHTML;
+    }
+    else
+    {
+        for (const child of children)
+            element.appendChild(child);
+    }
 
     return element;
 }
