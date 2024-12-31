@@ -20,7 +20,7 @@ Element.prototype.appendChild =
         
             return child;
         }
-        else if (child === null || child === undefined)
+        else if (child === false || child === null || child === undefined)
             return null;
         else
             return originalAppendChild.call(this, document.createTextNode(child.toString()));
